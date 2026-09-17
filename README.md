@@ -22,7 +22,7 @@ of which are in scope for the bounty or included here).
 
 ## Program ID
 
-- Devnet: `7d2nAxx7ewLkEgcgjHKctASPJufE4QYig6tHAVGErDUf`
+- Devnet: `6gPsxKe39anEt785fHRJAb6DLroZxayxhqTjJciciNrd`
 
 ## Building
 

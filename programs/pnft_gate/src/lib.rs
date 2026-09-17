@@ -12,7 +12,7 @@ use mpl_token_metadata::instructions::{
 };
 use mpl_token_metadata::types::{Data, Creator};
 
-declare_id!("7d2nAxx7ewLkEgcgjHKctASPJufE4QYig6tHAVGErDUf");
+declare_id!("6gPsxKe39anEt785fHRJAb6DLroZxayxhqTjJciciNrd");
 
 /// Dedicated fee-collection wallet, separate from the delegate/admin authority so it
 /// never needs to be a hot operational key. Receives the non-refundable half of the
@@ -26,8 +26,8 @@ const TREASURY: Pubkey = pubkey!("WL7FvaBTL5iDhaGZabmbYwGzq3V35LUvG7QuxqYk3ez");
 /// embedded in a public program binary is crackable in milliseconds via brute
 /// force unless the underlying hash function is itself expensive to compute.
 const ADMIN_ACTION_PIN_HASH: [u8; 32] = [
-    88, 171, 4, 56, 225, 246, 122, 130, 63, 15, 53, 32, 186, 125, 83, 6,
-    71, 72, 19, 234, 52, 4, 141, 47, 161, 251, 136, 103, 15, 232, 183, 213,
+    21, 100, 97, 75, 106, 201, 60, 178, 174, 147, 217, 203, 79, 244, 211, 45,
+    163, 37, 224, 93, 46, 174, 149, 232, 32, 30, 152, 22, 53, 157, 194, 39,
 ];
 
 /// Lock fee: a flat, non-refundable treasury charge, plus a refundable deposit
@@ -172,16 +172,30 @@ pub mod pnft_gate {
         require!(permit.expiry_ts >= now_ts, GateError::PermitExpired);
 
         // 0.5) Verify PIN hash (admin bypass allowed)
-        // Hybrid: if PIN account exists → verify PIN, if no PIN → skip (allow direct transfer)
+        // Hybrid: if a PinHash genuinely exists on-chain → verify it, if not → skip.
+        // Existence is checked via data_is_empty() on the always-seeds-constrained
+        // account, not an Option<Account> -- see the account struct's doc comment.
         let is_admin = ctx.accounts.owner.key() == ctx.accounts.config.admin;
-        
+
         if !is_admin {
-            if let Some(pin_account) = ctx.accounts.pin_hash_account.as_ref() {
-                // PIN exists → must verify it
+            if !ctx.accounts.pin_hash_account.data_is_empty() {
+                // Read pin_hash directly rather than deserializing via
+                // Account<PinHash> -- the address is already fully
+                // seeds-constrained above, so there's no type-confusion risk
+                // an 8-byte discriminator check would add here, and it
+                // sidesteps Account<'info, T>'s stricter lifetime
+                // requirements on this UncheckedAccount reference.
+                // Layout: 8-byte discriminator + owner(32) + mint(32) + pin_hash(32).
+                let data = ctx.accounts.pin_hash_account.try_borrow_data()?;
+                require!(data.len() >= 104, GateError::InvalidPin);
+                let mut stored_pin_hash = [0u8; 32];
+                stored_pin_hash.copy_from_slice(&data[72..104]);
+                drop(data);
+
                 let submitted = submitted_pin_hash.ok_or(GateError::PinRequired)?;
-                require!(submitted == pin_account.pin_hash, GateError::InvalidPin);
+                require!(submitted == stored_pin_hash, GateError::InvalidPin);
             }
-            // No PIN account → skip verification, allow transfer
+            // No PinHash on-chain → skip verification, allow transfer
         }
 
         // 1) Verify backend signature via ed25519 instruction present in sysvar instructions
@@ -325,15 +339,26 @@ pub mod pnft_gate {
 
     /// User opt-out: unlock (after that they can revoke delegate + transfer freely)
     pub fn opt_out(ctx: Context<OptOut>, submitted_pin_hash: Option<[u8; 32]>) -> Result<()> {
-        // Hybrid PIN check: if PIN account exists → verify PIN, if no PIN → skip.
+        // Hybrid PIN check: if a PinHash genuinely exists on-chain → verify it,
+        // if not → skip. Existence is checked via data_is_empty() on the
+        // always-seeds-constrained account, not an Option<Account> -- see the
+        // account struct's doc comment for why.
         // This always runs, admin included -- opt_out is the holder's own
         // self-service unlock, not an admin action, so signing with the admin
         // wallet must never bypass it. Admin-assisted recovery (holder forgot
         // their PIN) has its own dedicated instruction, admin_unlock, with its
         // own separate admin-action PIN check.
-        if let Some(pin_account) = ctx.accounts.pin_hash_account.as_ref() {
+        if !ctx.accounts.pin_hash_account.data_is_empty() {
+            // See the identical note in transfer_with_permit for why this reads
+            // pin_hash directly rather than via Account<PinHash>.
+            let data = ctx.accounts.pin_hash_account.try_borrow_data()?;
+            require!(data.len() >= 104, GateError::InvalidPin);
+            let mut stored_pin_hash = [0u8; 32];
+            stored_pin_hash.copy_from_slice(&data[72..104]);
+            drop(data);
+
             let submitted = submitted_pin_hash.ok_or(GateError::PinRequired)?;
-            require!(submitted == pin_account.pin_hash, GateError::InvalidPin);
+            require!(submitted == stored_pin_hash, GateError::InvalidPin);
         }
 
         let bump = ctx.bumps.delegate_pda;
@@ -443,7 +468,7 @@ pub mod pnft_gate {
     }
 
     /// User sets their PIN hash on-chain (per-NFT)
-    /// The PIN is hashed client-side (SHA-256) before being sent
+    /// The PIN is hashed client-side (Argon2id) before being sent
     pub fn set_pin(ctx: Context<SetPin>, pin_hash: [u8; 32]) -> Result<()> {
         let pin_account = &mut ctx.accounts.pin_hash;
         pin_account.owner = ctx.accounts.owner.key();
@@ -812,13 +837,20 @@ pub struct TransferWithPermit<'info> {
     )]
     pub nonce: Account<'info, Nonce>,
 
-    /// PIN hash account for on-chain verification (per-NFT)
-    /// Can be None for admin users (admin bypass)
+    /// CHECK: PIN hash PDA for (owner, mint) -- may not exist yet if the
+    /// holder never called set_pin. Deliberately NOT Option<Account>: Anchor
+    /// resolves an Option account to None from a client-supplied sentinel
+    /// (passing the program ID at this slot), not from actual on-chain
+    /// state -- letting a forged "no PIN was ever set" skip the check below
+    /// entirely, even when a real PinHash exists. Always seeds-constrained
+    /// so the address can't be swapped for anything else; existence is
+    /// checked in the instruction body via data_is_empty(), same pattern
+    /// already used for token_record state elsewhere in this file.
     #[account(
         seeds = [b"pin", owner.key().as_ref(), mint.key().as_ref()],
         bump
     )]
-    pub pin_hash_account: Option<Account<'info, PinHash>>,
+    pub pin_hash_account: UncheckedAccount<'info>,
 
     /// CHECK: Token Metadata program - address verified.
     #[account(address = mpl_token_metadata::ID)]
@@ -841,12 +873,15 @@ pub struct OptOut<'info> {
     #[account(mut)]
     pub owner: Signer<'info>,
 
+    /// CHECK: PIN hash PDA for (owner, mint) -- see the identical note in
+    /// TransferWithPermit above for why this is a required, seeds-
+    /// constrained UncheckedAccount rather than Option<Account>.
     #[account(
         seeds = [b"pin", owner.key().as_ref(), mint.key().as_ref()],
         bump
     )]
-    pub pin_hash_account: Option<Account<'info, PinHash>>,
-    
+    pub pin_hash_account: UncheckedAccount<'info>,
+
     /// CHECK: Mint account - validated by Token Metadata CPI.
     pub mint: UncheckedAccount<'info>,
 

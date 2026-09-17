@@ -6,7 +6,7 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-pnft_gate = "7d2nAxx7ewLkEgcgjHKctASPJufE4QYig6tHAVGErDUf"
+pnft_gate = "6gPsxKe39anEt785fHRJAb6DLroZxayxhqTjJciciNrd"
 
 [registry]
 url = "https://api.apr.dev"
