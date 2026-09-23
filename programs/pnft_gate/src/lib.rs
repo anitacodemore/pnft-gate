@@ -2,6 +2,7 @@ use anchor_lang::prelude::*;
 use anchor_lang::system_program;
 use anchor_spl::token::{Token, TokenAccount, Mint};
 use anchor_spl::associated_token::AssociatedToken;
+use mpl_token_metadata::accounts::Metadata as MplMetadata;
 use mpl_token_metadata::instructions::{
     DelegateLockedTransferV1CpiBuilder,
     LockV1CpiBuilder,
@@ -12,7 +13,7 @@ use mpl_token_metadata::instructions::{
 };
 use mpl_token_metadata::types::{Data, Creator};
 
-declare_id!("6gPsxKe39anEt785fHRJAb6DLroZxayxhqTjJciciNrd");
+declare_id!("8iGDFfyRoBcH9c1Y2gU8nosD7hNSSsskxjXK9xdUjEp3");
 
 /// Dedicated fee-collection wallet, separate from the delegate/admin authority so it
 /// never needs to be a hot operational key. Receives the non-refundable half of the
@@ -26,8 +27,8 @@ const TREASURY: Pubkey = pubkey!("WL7FvaBTL5iDhaGZabmbYwGzq3V35LUvG7QuxqYk3ez");
 /// embedded in a public program binary is crackable in milliseconds via brute
 /// force unless the underlying hash function is itself expensive to compute.
 const ADMIN_ACTION_PIN_HASH: [u8; 32] = [
-    21, 100, 97, 75, 106, 201, 60, 178, 174, 147, 217, 203, 79, 244, 211, 45,
-    163, 37, 224, 93, 46, 174, 149, 232, 32, 30, 152, 22, 53, 157, 194, 39,
+    254, 61, 169, 109, 63, 204, 117, 180, 191, 3, 116, 62, 201, 222, 212, 204,
+    75, 135, 239, 39, 56, 70, 71, 158, 56, 168, 6, 92, 73, 88, 114, 189,
 ];
 
 /// Lock fee: a flat, non-refundable treasury charge, plus a refundable deposit
@@ -48,6 +49,18 @@ const RENAME_FEE_TREASURY_LAMPORTS: u64 = 48_830_720;
 fn verify_admin_pin(submitted_pin_hash: [u8; 32]) -> Result<()> {
     require!(submitted_pin_hash == ADMIN_ACTION_PIN_HASH, GateError::InvalidAdminPin);
     Ok(())
+}
+
+/// True if `name` matches the collection's reserved default-numbering format
+/// ("FH no. <digits>", case-insensitive). Rejected as a target for ordinary
+/// renames so nobody can squat another mint's factory-default name -- the
+/// only path allowed to (re)claim this format is release_name's own
+/// revert-to-default CPI, which never calls through here.
+fn is_reserved_default_name(name: &str) -> bool {
+    match name.to_lowercase().strip_prefix("fh no. ") {
+        Some(rest) => !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()),
+        None => false,
+    }
 }
 
 #[program]
@@ -515,6 +528,11 @@ pub mod pnft_gate {
             GateError::NotOwner
         );
 
+        // Reserved format -- see is_reserved_default_name. Ordinary renames can
+        // never target it, so release_name's revert-to-default is guaranteed
+        // conflict-free for the rightful mint.
+        require!(!is_reserved_default_name(&name), GateError::ReservedName);
+
         // --- Name uniqueness check ---
         // name_record is init_if_needed: if freshly created, mint is Pubkey::default().
         // If it already exists and belongs to a different mint, reject.
@@ -523,6 +541,24 @@ pub mod pnft_gate {
             return Err(GateError::NameTaken.into());
         }
         name_record.mint = ctx.accounts.mint.key();
+
+        // Snapshot this mint's pristine, factory-default name the first time
+        // it's ever renamed through this program -- default_name_record is
+        // init_if_needed, so mint is still Pubkey::default() only on that
+        // first call, before the metadata account below has been touched by
+        // anything but the candy machine. Read directly from the account
+        // rather than trusting client input, so it can't be spoofed.
+        let default_name_record = &mut ctx.accounts.default_name_record;
+        if default_name_record.mint == Pubkey::default() {
+            let pristine_name = {
+                let data = ctx.accounts.metadata.try_borrow_data()?;
+                MplMetadata::from_bytes(&data)
+                    .map_err(|_| error!(GateError::MetadataReadFailed))?
+                    .name
+            };
+            default_name_record.mint = ctx.accounts.mint.key();
+            default_name_record.name = pristine_name;
+        }
 
         // Rename fee: flat, non-refundable treasury charge (see RENAME_FEE_TREASURY_LAMPORTS
         // doc comment — the NameRecord rent above is the only refundable part, via release).
@@ -577,9 +613,29 @@ pub mod pnft_gate {
         Ok(())
     }
 
-    /// Release a previously claimed name so it can be reused by another NFT.
-    /// Call this after renaming an NFT to free the old name.
+    /// Release a previously claimed name so it can be reused by another NFT,
+    /// and reset this NFT's own displayed name back to its factory default
+    /// ("FH no. <N>", captured the first time this mint was ever renamed --
+    /// see default_name_record in update_metadata_delegated). Call this after
+    /// renaming an NFT to free the old name; the frontend bundles it with the
+    /// following update_metadata_delegated call when renaming to something
+    /// new, so this reset is only ever visible when releasing without an
+    /// immediate rename.
     pub fn release_name(ctx: Context<ReleaseName>, _name: String) -> Result<()> {
+        // Reject if NFT is currently locked or listed -- same check as
+        // update_metadata_delegated, now that this also CPIs a metadata update.
+        let token_record_info = &ctx.accounts.token_record;
+        if !token_record_info.data_is_empty() {
+            let data = token_record_info.try_borrow_data()?;
+            if data.len() > 2 {
+                match data[2] {
+                    1 => return Err(GateError::NftIsLocked.into()),
+                    2 => return Err(GateError::NftIsListed.into()),
+                    _ => {}
+                }
+            }
+        }
+
         // Verify caller owns the token
         require!(ctx.accounts.token_account.amount == 1, GateError::NotOwner);
         require_keys_eq!(
@@ -595,7 +651,40 @@ pub mod pnft_gate {
             GateError::NotOwner
         );
 
-        // Account is closed via the close constraint — rent returned to holder
+        // Reset the displayed name to the stored default. Read the current
+        // metadata so symbol/uri/seller_fee_basis_points/creators are carried
+        // forward unchanged -- only name reverts.
+        let current = {
+            let data = ctx.accounts.metadata.try_borrow_data()?;
+            MplMetadata::from_bytes(&data).map_err(|_| error!(GateError::MetadataReadFailed))?
+        };
+
+        let bump = ctx.bumps.metadata_delegate_pda;
+        let mint_key = ctx.accounts.mint.key();
+        let signer_seeds: &[&[&[u8]]] = &[&[
+            b"metadata_delegate",
+            mint_key.as_ref(),
+            &[bump],
+        ]];
+
+        UpdateV1CpiBuilder::new(&ctx.accounts.token_metadata_program.to_account_info())
+            .authority(&ctx.accounts.metadata_delegate_pda.to_account_info())
+            .metadata(&ctx.accounts.metadata.to_account_info())
+            .mint(&ctx.accounts.mint.to_account_info())
+            .payer(&ctx.accounts.holder.to_account_info())
+            .system_program(&ctx.accounts.system_program.to_account_info())
+            .sysvar_instructions(&ctx.accounts.sysvar_instructions.to_account_info())
+            .new_update_authority(ctx.accounts.metadata_delegate_pda.key())
+            .data(Data {
+                name: ctx.accounts.default_name_record.name.clone(),
+                symbol: current.symbol,
+                uri: current.uri,
+                seller_fee_basis_points: current.seller_fee_basis_points,
+                creators: current.creators,
+            })
+            .invoke_signed(signer_seeds)?;
+
+        // NameRecord is closed via the close constraint — rent returned to holder
         Ok(())
     }
 }
@@ -637,6 +726,12 @@ pub struct LockDeposit {
 #[account]
 pub struct NameRecord {
     pub mint: Pubkey, // NFT mint that owns this name
+}
+
+#[account]
+pub struct DefaultNameRecord {
+    pub mint: Pubkey, // NFT mint this default belongs to
+    pub name: String, // pristine "FH no. <N>" name, captured on first rename
 }
 
 /// Input struct for creator data passed from client
@@ -1113,6 +1208,17 @@ pub struct UpdateMetadataDelegated<'info> {
     )]
     pub name_record: Account<'info, NameRecord>,
 
+    /// Snapshot of this mint's factory-default name -- created once, on the
+    /// first-ever rename, and never overwritten after. See update_metadata_delegated.
+    #[account(
+        init_if_needed,
+        payer = holder,
+        space = 8 + 32 + 4 + 32,
+        seeds = [b"default_name", mint.key().as_ref()],
+        bump
+    )]
+    pub default_name_record: Account<'info, DefaultNameRecord>,
+
     /// CHECK: pNFT token record PDA - used to check listing state before allowing updates.
     pub token_record: UncheckedAccount<'info>,
 
@@ -1156,6 +1262,38 @@ pub struct ReleaseName<'info> {
     )]
     pub name_record: Account<'info, NameRecord>,
 
+    /// Must already exist -- guaranteed, since a NameRecord can't exist
+    /// (nothing to release) without a prior update_metadata_delegated call
+    /// having created this first.
+    #[account(
+        seeds = [b"default_name", mint.key().as_ref()],
+        bump
+    )]
+    pub default_name_record: Account<'info, DefaultNameRecord>,
+
+    /// CHECK: Metadata PDA - derived from mint, validated by Token Metadata CPI.
+    #[account(mut)]
+    pub metadata: UncheckedAccount<'info>,
+
+    /// Metadata delegate PDA - this program's authority for metadata updates
+    /// CHECK: Seeds validated by constraint
+    #[account(
+        seeds = [b"metadata_delegate", mint.key().as_ref()],
+        bump
+    )]
+    pub metadata_delegate_pda: UncheckedAccount<'info>,
+
+    /// CHECK: pNFT token record PDA - used to check listing/lock state before allowing updates.
+    pub token_record: UncheckedAccount<'info>,
+
+    /// CHECK: Token Metadata program - address verified.
+    #[account(address = mpl_token_metadata::ID)]
+    pub token_metadata_program: UncheckedAccount<'info>,
+
+    /// CHECK: Sysvar instructions account required for UpdateV1 CPI
+    #[account(address = anchor_lang::solana_program::sysvar::instructions::ID)]
+    pub sysvar_instructions: UncheckedAccount<'info>,
+
     pub system_program: Program<'info, System>,
 }
 
@@ -1193,6 +1331,10 @@ pub enum GateError {
     InvalidAdminPin,
     #[msg("NFT is not currently locked -- Theft Recovery requires an active lock")]
     NftNotLocked,
+    #[msg("This name format is reserved for the collection's default numbering")]
+    ReservedName,
+    #[msg("Failed to read NFT metadata")]
+    MetadataReadFailed,
 }
 
 /* ---------------- Ed25519 Signature Verification ---------------- */

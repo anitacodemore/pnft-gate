@@ -22,7 +22,7 @@ of which are in scope for the bounty or included here).
 
 ## Program ID
 
-- Devnet: `6gPsxKe39anEt785fHRJAb6DLroZxayxhqTjJciciNrd`
+- Devnet: `8iGDFfyRoBcH9c1Y2gU8nosD7hNSSsskxjXK9xdUjEp3`
 
 ## Building
 
@@ -97,10 +97,18 @@ blocked while an NFT is locked or listed):
 - **`update_metadata_delegated(name, symbol, uri, creators_data)`** —
   holder-signed. Renames/updates an NFT the program holds update-authority
   over. Enforces global name uniqueness via a `NameRecord` PDA keyed on the
-  name, and charges a flat non-refundable rename fee.
+  name, rejects any name matching the collection's reserved default-numbering
+  format ("FH no. `<N>`") as a rename target, and charges a flat
+  non-refundable rename fee. On a mint's first-ever rename, also snapshots
+  its current (pristine, pre-rename) name into a new `DefaultNameRecord`
+  PDA, read directly from the mint's own on-chain metadata rather than
+  trusted from caller input.
 - **`release_name(name)`** — holder-signed. Frees a name claimed by a
   previous `update_metadata_delegated` call (e.g. after renaming again),
-  closing the `NameRecord` PDA and refunding its rent to the caller.
+  closing the `NameRecord` PDA and refunding its rent to the caller — and
+  resets the NFT's displayed name back to the value stored in its
+  `DefaultNameRecord` via an `UpdateV1` CPI, rather than leaving the
+  released name on display with nothing backing it.
 
 ## Design notes
 

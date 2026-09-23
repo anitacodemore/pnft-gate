@@ -6,9 +6,11 @@ resolver = "2"
 
 # Force older blake3 to avoid edition2024 incompatibility with SBF Cargo 1.84
 # Force indexmap < 2.13.0 to avoid requiring rustc 1.82
+# Force base64ct < 1.7.0 to avoid edition2024 requirement
 [workspace.dependencies]
 blake3 = "=1.5.0"
 indexmap = "=2.7.0"
+base64ct = "=1.6.0"
 
 [profile.release]
 overflow-checks = true
