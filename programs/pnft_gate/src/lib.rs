@@ -296,7 +296,19 @@ pub mod pnft_gate {
         // delegation (granted during opt_in), so a never-locked (or already
         // self-unlocked) NFT has no valid authority for this program to transfer it
         // with. Fail with a clear message here rather than a cryptic CPI error.
-        require!(!ctx.accounts.delegate_record.data_is_empty(), GateError::NftNotLocked);
+        //
+        // Read this off from_token_record's own state byte, same signal opt_in/
+        // update_metadata_delegated already trust -- NOT delegate_record's mere
+        // existence. DelegateLockedTransferV1 stores the actual delegation
+        // (delegate/delegate_role/locked_transfer) inside the token record
+        // itself; it doesn't necessarily leave delegate_record funded, so
+        // checking that account was silently always wrong here.
+        let from_token_record_info = &ctx.accounts.from_token_record;
+        let is_locked = !from_token_record_info.data_is_empty() && {
+            let data = from_token_record_info.try_borrow_data()?;
+            data.len() > 2 && data[2] == 1
+        };
+        require!(is_locked, GateError::NftNotLocked);
 
         let bump = ctx.bumps.delegate_pda;
         let mint_key = ctx.accounts.mint.key();
@@ -321,13 +333,6 @@ pub mod pnft_gate {
             .spl_token_program(Some(&ctx.accounts.spl_token_program.to_account_info()))
             .invoke_signed(signer_seeds)?;
 
-        // Refund any refundable deposit to the admin performing the recovery — this
-        // is a theft-recovery override, not a normal unlock, so the deposit does
-        // NOT automatically go back to whoever originally locked it.
-        if let Some(deposit) = &ctx.accounts.lock_deposit {
-            deposit.close(ctx.accounts.admin.to_account_info())?;
-        }
-
         // 2) Transfer (delegate PDA is authority)
         TransferV1CpiBuilder::new(&ctx.accounts.token_metadata_program.to_account_info())
             .authority(&ctx.accounts.delegate_pda.to_account_info())
@@ -346,6 +351,16 @@ pub mod pnft_gate {
             .spl_token_program(&ctx.accounts.spl_token_program.to_account_info())
             .spl_ata_program(&ctx.accounts.spl_ata_program.to_account_info())
             .invoke_signed(signer_seeds)?;
+
+        // Refund any refundable deposit to the admin performing the recovery — this
+        // is a theft-recovery override, not a normal unlock, so the deposit does
+        // NOT automatically go back to whoever originally locked it. Closed last,
+        // after every CPI, matching opt_out's own working order -- closing it
+        // between two CPIs (as this originally did) tripped the runtime's
+        // lamport-conservation check on the next CPI attempt.
+        if let Some(deposit) = &ctx.accounts.lock_deposit {
+            deposit.close(ctx.accounts.admin.to_account_info())?;
+        }
 
         Ok(())
     }
@@ -1100,7 +1115,11 @@ pub struct AdminTransfer<'info> {
     #[account(mut)]
     pub admin: Signer<'info>,
 
-    /// CHECK: The user we are taking the NFT from.
+    /// CHECK: The user we are taking the NFT from. Must be mut -- UnlockV1's
+    /// token_owner can receive lamport adjustments during unlock (same
+    /// reason OptOut's owner is mut); without this the runtime rejects the
+    /// CPI with UnbalancedInstruction the moment it touches this account.
+    #[account(mut)]
     pub from_owner: UncheckedAccount<'info>,
 
     /// CHECK: Mint account - validated by CPI.
