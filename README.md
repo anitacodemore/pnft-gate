@@ -2,8 +2,11 @@
 
 An Anchor program for Forever Harambe that locks a programmable NFT (pNFT)
 behind a passphrase, using Metaplex Token Metadata's delegate/lock
-authority. The holder sets a passphrase-derived hash; the NFT stays locked
-(non-transferable) until the correct passphrase is supplied to unlock it.
+authority. The holder's passphrase is stretched into an ed25519 keypair;
+only the public key is ever stored on-chain, and unlocking requires an
+actual signature from the matching private key (regenerated client-side
+from the passphrase each time). The NFT stays locked (non-transferable)
+until that signature is produced.
 
 This repo exists as the target for Forever Harambe's bug bounty. If you find
 a way to unlock, transfer, or otherwise compromise a locked NFT without the
@@ -42,92 +45,115 @@ above); the IDL plus this reference is the starting point for writing one.
 
 ## How it works — instruction flow
 
-One-time setup, called once by whoever deploys the program:
+One-time setup, called once by the deploying admin:
 
-1. **`initialize(backend_signer)`** — admin-signed. Creates the program's
-   `Config` PDA (`seeds = ["config_v2"]`), recording the admin wallet and a
-   `backend_signer` pubkey. `backend_signer` is whoever's allowed to issue
-   the signed permits `transfer_with_permit` checks for (see below) — it
-   never needs to be a hot/spending key, only a signing one.
+1. **`initialize(admin_action_pubkey, collection_mint)`** — the `admin`
+   account is constrained to a hardcoded `EXPECTED_INITIAL_ADMIN` pubkey
+   (see *Design notes*), so only that specific wallet can ever
+   successfully call this. Creates the program's `Config` PDA
+   (`seeds = ["config_v2"]`), recording the admin wallet, an
+   `admin_action_pubkey` (the second factor for admin recovery — see
+   below), and the `collection_mint` this program is scoped to.
 
 Normal holder flow, per NFT:
 
-2. **`opt_in()`** — holder-signed. Delegates locked-transfer authority to
-   this program's PDA and locks the pNFT via Metaplex Token Metadata's
-   `DelegateLockedTransferV1` + `LockV1`. Charges a flat, non-refundable
-   fee to `TREASURY` plus a refundable deposit (a `LockDeposit` PDA sized
-   to exactly its own rent-exemption — what's refunded later is exactly
-   what was charged, never more or less).
-3. **`set_pin(pin_hash)`** *(optional)* — holder-signed. Stores a
-   SHA-256 hash of a passphrase, hashed client-side, in a per-NFT `PinHash`
-   PDA. If never called, later PIN checks are skipped entirely (hybrid
-   check — see *Design notes*).
-4. **`transfer_with_permit(permit, submitted_pin_hash)`** — holder-signed.
-   The main unlock-to-send path: atomically unlocks, transfers, and
-   re-locks at the destination in one instruction. Requires a `Permit`
-   (mint, from/to owners, a single-use nonce PDA, an expiry, and an ed25519
-   signature over those fields) signed by `Config.backend_signer` —
-   verified on-chain by walking the transaction's sysvar instructions for a
-   matching `Ed25519Program` verify instruction, not by trusting a raw
-   signature blob. If a PIN was set in step 3, the correct
-   `submitted_pin_hash` is also required (admin wallets bypass the PIN,
-   never the permit).
-5. **`opt_out(submitted_pin_hash)`** — holder-signed. Fully unlocks,
-   revokes the locked-transfer delegate, and closes/refunds the
-   `LockDeposit` from step 2. Same hybrid PIN check as step 4. After this
-   the NFT transfers normally, with no program involvement.
+2. **`opt_in()`** — holder-signed. Requires the NFT to be a *verified*
+   member of `Config.collection_mint` (unspoofable — only the collection
+   authority can set `verified = true`). Delegates locked-transfer
+   authority to this program's PDA and locks the pNFT via Metaplex Token
+   Metadata's `DelegateLockedTransferV1` + `LockV1`. Charges a flat,
+   non-refundable fee to `TREASURY` plus a refundable deposit (a
+   `LockDeposit` PDA sized to exactly its own rent-exemption).
+3. **`set_pin(new_passphrase_pubkey)`** — holder-signed. The client
+   stretches the passphrase with Argon2id and derives an ed25519 keypair
+   from the output; only the **public** key is sent here, stored in a
+   per-NFT `PassphraseKey` PDA. If a passphrase is already set, changing
+   it requires the *current* passphrase key to co-sign
+   (`old_passphrase_signer`) — a thief with only the wallet key cannot
+   rotate the passphrase out from under the real holder.
+4. **`opt_out()`** — holder-signed, *and* co-signed by
+   `passphrase_signer`, whose public key must equal the one stored in
+   `PassphraseKey`. This is a real ed25519 signature check, not a value
+   comparison — the private key is regenerated client-side from the
+   typed passphrase and never stored or transmitted, so there is nothing
+   to read off-chain and replay. Unlocks, revokes the locked-transfer
+   delegate, and closes/refunds the `LockDeposit`.
 
-Admin-only recovery flows (require the admin wallet *and* a submitted
-Argon2id hash matching the `ADMIN_ACTION_PIN_HASH` constant — see *Design
-notes*):
+Admin-only recovery flows (require the admin wallet's signature *and* a
+co-signature from `admin_action_signer`, whose public key must equal
+`Config.admin_action_pubkey` — see *Design notes*):
 
-- **`admin_unlock(submitted_pin_hash)`** — unlocks without transferring
-  (holder lost their PIN); refunds the `LockDeposit` to the original
-  locker, not the admin.
-- **`admin_transfer(submitted_pin_hash)`** — force-unlocks and transfers a
-  locked NFT to a new owner (lost/stolen recovery). Only works while the
-  NFT is actually locked/delegated to this program — there's no valid
-  authority to act on a never-locked NFT.
-- **`update_admin(new_admin)`** — rotates the admin address recorded in
-  `Config`.
+- **`admin_unlock()`** — unlocks without transferring (holder lost their
+  passphrase); refunds the `LockDeposit` to the original locker, not the
+  admin, and closes their stale `PassphraseKey` so a re-lock isn't
+  blocked by the overwrite guard.
+- **`admin_transfer()`** — force-unlocks and transfers a locked NFT to a
+  new owner (lost/stolen recovery). Only works while the NFT is actually
+  locked/delegated to this program, checked off the token record's own
+  state byte.
+- **`admin_reset_pin()`** — clears a holder's `PassphraseKey` (forgotten
+  passphrase), refunding its rent, so they can set a fresh one.
+- **`update_admin(new_admin)`** — rotates `Config.admin`. Admin wallet
+  only.
+- **`update_admin_action_key(new_key)`** — rotates the second factor.
+  Requires *both* the admin wallet and the **current** admin-action key
+  to sign — a stolen admin wallet alone cannot swap in an attacker's own
+  second factor.
+- **`close_config()`** — admin + admin-action gated close of `Config`
+  (used on devnet to re-initialize after a layout change).
 
 Metadata / naming (independent of the lock state machine above, but
-blocked while an NFT is locked or listed):
+blocked while an NFT is locked or listed, and gated to verified members
+of `collection_mint`):
 
-- **`update_metadata_delegated(name, symbol, uri, creators_data)`** —
-  holder-signed. Renames/updates an NFT the program holds update-authority
-  over. Enforces global name uniqueness via a `NameRecord` PDA keyed on the
-  name, rejects any name matching the collection's reserved default-numbering
-  format ("FH no. `<N>`") as a rename target, and charges a flat
-  non-refundable rename fee. On a mint's first-ever rename, also snapshots
-  its current (pristine, pre-rename) name into a new `DefaultNameRecord`
-  PDA, read directly from the mint's own on-chain metadata rather than
+- **`update_metadata_delegated(name)`** — holder-signed. The **only**
+  field the holder can change is `name`; `symbol`, `uri`, `creators`, and
+  `seller_fee_basis_points` are read directly from the NFT's current
+  on-chain metadata and carried forward untouched, so a rename can never
+  swap the art or reshuffle royalties. Enforces global name uniqueness
+  via a `NameRecord` PDA, rejects the collection's reserved
+  default-numbering format ("FH no. `<N>`") as a rename target, and
+  charges a flat non-refundable rename fee. On a mint's first-ever
+  rename, also snapshots its pristine pre-rename name into a
+  `DefaultNameRecord` PDA, read directly from the account rather than
   trusted from caller input.
 - **`release_name(name)`** — holder-signed. Frees a name claimed by a
-  previous `update_metadata_delegated` call (e.g. after renaming again),
-  closing the `NameRecord` PDA and refunding its rent to the caller — and
-  resets the NFT's displayed name back to the value stored in its
-  `DefaultNameRecord` via an `UpdateV1` CPI, rather than leaving the
-  released name on display with nothing backing it.
+  previous `update_metadata_delegated` call, closing the `NameRecord` PDA
+  and refunding its rent — and resets the NFT's displayed name back to
+  the value stored in `DefaultNameRecord` via an `UpdateV1` CPI, rather
+  than leaving the released name on display with nothing backing it.
+
+Both `update_metadata_delegated` and `release_name` address-bind
+`token_record` to the real Metaplex PDA for `(mint, token_account)` via
+`seeds` + `seeds::program`, so the locked/listed check that guards them
+can't be bypassed by passing a spoofed or empty account.
 
 ## Design notes
 
-- **Hybrid PIN checks** (`transfer_with_permit`, `opt_out`): if a
-  `PinHash` account exists for the NFT, the correct hash must be supplied;
-  if one was never set, the check is skipped rather than failing closed.
-  Worth specifically checking whether every code path that *should* require
-  a PIN actually creates or checks for one consistently.
-- **Two-factor-shaped admin actions**: admin recovery instructions require
-  both the admin wallet's signature *and* a submitted hash matching the
-  Argon2id-hashed `ADMIN_ACTION_PIN_HASH` constant embedded in the program.
-  Only the hash is on-chain/in this source — the plaintext lives off-chain
-  and is never itself transmitted. Argon2id specifically (not a fast hash
-  like SHA-256) because a hash embedded in a public, on-chain program is
-  otherwise brute-forceable in milliseconds regardless of source
-  visibility.
-- **Permit replay protection**: each `Permit` carries a `nonce` field that
-  must point at a fresh, not-yet-used `Nonce` PDA, which `transfer_with_permit`
-  marks used before proceeding — the same permit can't be replayed twice.
+- **Passphrase as a signing key, not a stored secret.** An earlier
+  version of this program stored an Argon2id hash on-chain and compared
+  a submitted hash against it. That's not a secret check: the stored
+  hash sits in a public account, so anyone — no passphrase knowledge
+  required — can read it and resubmit the exact same bytes. The current
+  design instead derives an ed25519 **keypair** from
+  `Argon2id(passphrase)` and stores only the public key; unlocking
+  requires an actual signature, which you cannot forge from a public key
+  alone. The same fix applies to the admin second factor
+  (`admin_action_pubkey`) — it was previously a hash compiled into the
+  public program binary.
+- **`initialize` front-run protection.** `Config`'s address is a fixed
+  PDA, derivable by anyone the moment the program ID is public, and
+  `init` only succeeds once — so without a check, whoever's `initialize`
+  transaction lands first becomes `Config.admin` permanently, including
+  an attacker's bot racing the real deploy. `EXPECTED_INITIAL_ADMIN` is a
+  hardcoded public key (safe to hardcode, unlike the old PIN hash) that
+  `initialize`'s `admin` account is constrained to.
+- **Known accepted limitation:** admin recovery power is still held by a
+  single wallet + a single second-factor key, not a multisig. If both
+  leak together, every locked NFT in the collection is one transaction
+  away from `admin_transfer`. Key rotation exists
+  (`update_admin_action_key`), but this is a real, disclosed gap, not a
+  claim that admin compromise is impossible.
 
 ## Scope
 

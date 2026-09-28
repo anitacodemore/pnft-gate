@@ -20,17 +20,22 @@ declare_id!("8iGDFfyRoBcH9c1Y2gU8nosD7hNSSsskxjXK9xdUjEp3");
 /// lock fee (see opt_in).
 const TREASURY: Pubkey = pubkey!("WL7FvaBTL5iDhaGZabmbYwGzq3V35LUvG7QuxqYk3ez");
 
-/// Argon2id hash of the admin action passphrase (see scripts/pnftgate/hashAdminPin.ts).
-/// Gates admin_unlock and admin_transfer on top of the wallet-signature check. Only
-/// the hash is embedded here — the plaintext passphrase lives only in .env and is
-/// never stored on-chain. Argon2id (not the old plain SHA-256) because a hash
-/// embedded in a public program binary is crackable in milliseconds via brute
-/// force unless the underlying hash function is itself expensive to compute.
-const ADMIN_ACTION_PIN_HASH: [u8; 32] = [
-    254, 61, 169, 109, 63, 204, 117, 180, 191, 3, 116, 62, 201, 222, 212, 204,
-    75, 135, 239, 39, 56, 70, 71, 158, 56, 168, 6, 92, 73, 88, 114, 189,
-];
+/// The only wallet allowed to call `initialize`. Config's address is a fixed PDA
+/// (seeds = ["config_v2"]), computable by anyone the moment the program ID is
+/// public, and `init` only ever succeeds once -- without this, whoever's
+/// `initialize` transaction lands first becomes Config.admin permanently,
+/// including an attacker's bot racing the real deploy. A public key is safe to
+/// hardcode (unlike the old PIN hash); this only gates the one bootstrapping
+/// call, never the ongoing admin identity (which stays reassignable via
+/// update_admin after initialize succeeds).
+const EXPECTED_INITIAL_ADMIN: Pubkey = pubkey!("HRMgh5kg8dUXapMgZ4PKEPjfBxk1wZpRXsNCnAWNMHBE");
 
+/// Admin actions (admin_unlock, admin_transfer, admin_reset_pin) are gated by a
+/// second factor stored as a PUBLIC KEY in Config.admin_action_pubkey and proven
+/// by a signature (the admin_action_signer account) — NOT by a hash comparison.
+/// The old approach embedded a hash constant in the program binary, which anyone
+/// could extract from the public .so; the private key now lives only in .env.
+///
 /// Lock fee: a flat, non-refundable treasury charge, plus a refundable deposit
 /// that's simply the LockDeposit PDA's own rent-exemption -- not a separate padded
 /// amount, so what gets refunded on unlock is exactly what was charged, always.
@@ -46,11 +51,6 @@ const LOCK_FEE_TREASURY_LAMPORTS: u64 = 18_601_040;
 /// rent-exemption (0.00116928 SOL) = 0.04883072 SOL.
 const RENAME_FEE_TREASURY_LAMPORTS: u64 = 48_830_720;
 
-fn verify_admin_pin(submitted_pin_hash: [u8; 32]) -> Result<()> {
-    require!(submitted_pin_hash == ADMIN_ACTION_PIN_HASH, GateError::InvalidAdminPin);
-    Ok(())
-}
-
 /// True if `name` matches the collection's reserved default-numbering format
 /// ("FH no. <digits>", case-insensitive). Rejected as a target for ordinary
 /// renames so nobody can squat another mint's factory-default name -- the
@@ -63,15 +63,73 @@ fn is_reserved_default_name(name: &str) -> bool {
     }
 }
 
+/// Close a program-owned PDA by draining its lamports to `dest`, if it currently
+/// exists (owned by this program with data). Used to GUARANTEE the lock_deposit
+/// is closed on every unlock path — a seed-bound account the caller must pass, so
+/// it can never be skipped (passing null) and left behind to brick a future opt_in
+/// on that mint (Medium #7). No-op when there's nothing owned by us to close.
+fn close_pda_if_exists<'info>(
+    acct: &AccountInfo<'info>,
+    dest: &AccountInfo<'info>,
+    program_id: &Pubkey,
+) -> Result<()> {
+    if acct.owner == program_id && !acct.data_is_empty() {
+        let lamports = acct.lamports();
+        **dest.try_borrow_mut_lamports()? = dest.lamports().checked_add(lamports).unwrap();
+        **acct.try_borrow_mut_lamports()? = 0;
+        acct.assign(&system_program::ID);
+        acct.realloc(0, false)?;
+    }
+    Ok(())
+}
+
+/// Require that the NFT is a VERIFIED member of the configured collection. Reading
+/// `verified` (not just the key) is essential: anyone can write a collection key
+/// into their own NFT, but only the collection authority can set verified=true, so
+/// this is unspoofable. Gates opt_in and the rename instructions so the program —
+/// and admin recovery power — only ever act on the project's own collection.
+fn require_in_collection(metadata: &AccountInfo, collection_mint: &Pubkey) -> Result<()> {
+    let data = metadata.try_borrow_data()?;
+    let md = MplMetadata::from_bytes(&data).map_err(|_| error!(GateError::MetadataReadFailed))?;
+    let coll = md.collection.ok_or(GateError::NotInCollection)?;
+    require!(coll.verified && coll.key == *collection_mint, GateError::NotInCollection);
+    Ok(())
+}
+
 #[program]
 pub mod pnft_gate {
     use super::*;
 
-    /// Initialize the program config with admin and backend signer
-    pub fn initialize(ctx: Context<Initialize>, backend_signer: Pubkey) -> Result<()> {
+    /// Initialize the program config with the admin address and the admin-action
+    /// public key (the second factor for admin recovery instructions).
+    pub fn initialize(
+        ctx: Context<Initialize>,
+        admin_action_pubkey: Pubkey,
+        collection_mint: Pubkey,
+    ) -> Result<()> {
         let cfg = &mut ctx.accounts.config;
-        cfg.backend_signer = backend_signer;
         cfg.admin = ctx.accounts.admin.key();
+        cfg.admin_action_pubkey = admin_action_pubkey;
+        cfg.collection_mint = collection_mint;
+        Ok(())
+    }
+
+    /// Admin-gated close of the Config account (used on devnet to re-initialize
+    /// with a changed layout). Requires admin + admin-action 2FA, both read from
+    /// the account's raw bytes so this works even when the on-chain layout differs
+    /// from the current Config struct. Config PDA is seed-bound and closed by seeds.
+    pub fn close_config(ctx: Context<CloseConfig>) -> Result<()> {
+        let cfg_ai = ctx.accounts.config.to_account_info();
+        {
+            let data = cfg_ai.try_borrow_data()?;
+            require!(data.len() >= 72, GateError::MetadataReadFailed);
+            // Layout: 8-byte discriminator + admin(32) + admin_action_pubkey(32).
+            let admin = Pubkey::new_from_array(data[8..40].try_into().unwrap());
+            let action = Pubkey::new_from_array(data[40..72].try_into().unwrap());
+            require_keys_eq!(ctx.accounts.admin.key(), admin, GateError::NotOwner);
+            require_keys_eq!(ctx.accounts.admin_action_signer.key(), action, GateError::InvalidAdminPin);
+        }
+        close_pda_if_exists(&cfg_ai, &ctx.accounts.admin.to_account_info(), ctx.program_id)?;
         Ok(())
     }
 
@@ -83,9 +141,34 @@ pub mod pnft_gate {
         Ok(())
     }
 
+    /// Rotate the admin-action public key. Requires BOTH the admin wallet AND the
+    /// CURRENT admin-action key to sign (see RotateAdminActionKey). This is the
+    /// independent-authorization fix: a stolen admin wallet alone can NOT swap in
+    /// an attacker's second factor and thereby gain full admin-recovery power.
+    ///
+    /// Lockout note: because the current second factor must sign, you can only
+    /// rotate while you still hold it. If the admin-action key is ever lost
+    /// entirely, the program's upgrade authority is the backstop (it can already
+    /// replace the whole program, so it can migrate this value) — until the
+    /// program is made immutable for mainnet, at which point plan rotation with
+    /// a multisig-held upgrade authority.
+    pub fn update_admin_action_key(ctx: Context<RotateAdminActionKey>, new_key: Pubkey) -> Result<()> {
+        require_keys_eq!(ctx.accounts.admin.key(), ctx.accounts.config.admin, GateError::NotOwner);
+        ctx.accounts.config.admin_action_pubkey = new_key;
+        Ok(())
+    }
+
     /// User opts in: delegate locked transfer + lock the pNFT
     /// After this, the NFT cannot be transferred without going through this program
     pub fn opt_in(ctx: Context<OptIn>) -> Result<()> {
+        // Collection gate: only VERIFIED members of the configured collection may
+        // be locked. This scopes the whole program (and admin recovery power) to
+        // the project's own collection.
+        require_in_collection(
+            &ctx.accounts.metadata.to_account_info(),
+            &ctx.accounts.config.collection_mint,
+        )?;
+
         // Reject if NFT is currently locked or listed on the marketplace.
         // Token record byte 2 = state: 0=Unlocked, 1=Locked, 2=Listed -- matches
         // mpl_token_metadata::types::TokenState's real discriminant order. This
@@ -169,127 +252,13 @@ pub mod pnft_gate {
         Ok(())
     }
 
-    /// Transfer with backend-issued permit (PIN -> permit)
-    /// Flow: verify PIN hash -> verify permit via ed25519 instruction -> unlock -> transfer -> lock
-    pub fn transfer_with_permit(
-        ctx: Context<TransferWithPermit>, 
-        permit: Permit,
-        submitted_pin_hash: Option<[u8; 32]>,
-    ) -> Result<()> {
-        // 0) Validate permit fields
-        require_keys_eq!(permit.mint, ctx.accounts.mint.key(), GateError::BadPermit);
-        require_keys_eq!(permit.from_owner, ctx.accounts.owner.key(), GateError::BadPermit);
-        require_keys_eq!(permit.to, ctx.accounts.to_owner.key(), GateError::BadPermit);
-
-        let now_ts = Clock::get()?.unix_timestamp;
-        require!(permit.expiry_ts >= now_ts, GateError::PermitExpired);
-
-        // 0.5) Verify PIN hash (admin bypass allowed)
-        // Hybrid: if a PinHash genuinely exists on-chain → verify it, if not → skip.
-        // Existence is checked via data_is_empty() on the always-seeds-constrained
-        // account, not an Option<Account> -- see the account struct's doc comment.
-        let is_admin = ctx.accounts.owner.key() == ctx.accounts.config.admin;
-
-        if !is_admin {
-            if !ctx.accounts.pin_hash_account.data_is_empty() {
-                // Read pin_hash directly rather than deserializing via
-                // Account<PinHash> -- the address is already fully
-                // seeds-constrained above, so there's no type-confusion risk
-                // an 8-byte discriminator check would add here, and it
-                // sidesteps Account<'info, T>'s stricter lifetime
-                // requirements on this UncheckedAccount reference.
-                // Layout: 8-byte discriminator + owner(32) + mint(32) + pin_hash(32).
-                let data = ctx.accounts.pin_hash_account.try_borrow_data()?;
-                require!(data.len() >= 104, GateError::InvalidPin);
-                let mut stored_pin_hash = [0u8; 32];
-                stored_pin_hash.copy_from_slice(&data[72..104]);
-                drop(data);
-
-                let submitted = submitted_pin_hash.ok_or(GateError::PinRequired)?;
-                require!(submitted == stored_pin_hash, GateError::InvalidPin);
-            }
-            // No PinHash on-chain → skip verification, allow transfer
-        }
-
-        // 1) Verify backend signature via ed25519 instruction present in sysvar instructions
-        verify_ed25519_signature(
-            &ctx.accounts.sysvar_instructions,
-            &ctx.accounts.config.backend_signer,
-            &permit.message_bytes(),
-            &permit.signature,
-        )?;
-
-        // 2) Nonce replay protection
-        let nonce = &mut ctx.accounts.nonce;
-        require!(!nonce.used, GateError::NonceUsed);
-        nonce.used = true;
-
-        // PDA signer
-        let bump = ctx.bumps.delegate_pda;
-        let mint_key = ctx.accounts.mint.key();
-        let signer_seeds: &[&[&[u8]]] = &[&[
-            b"delegate",
-            mint_key.as_ref(),
-            &[bump],
-        ]];
-
-        // 3) Unlock
-        UnlockV1CpiBuilder::new(&ctx.accounts.token_metadata_program.to_account_info())
-            .authority(&ctx.accounts.delegate_pda.to_account_info())
-            .token_owner(Some(&ctx.accounts.owner.to_account_info()))
-            .token(&ctx.accounts.from_token.to_account_info())
-            .mint(&ctx.accounts.mint.to_account_info())
-            .metadata(&ctx.accounts.metadata.to_account_info())
-            .edition(Some(&ctx.accounts.master_edition.to_account_info()))
-            .token_record(Some(&ctx.accounts.from_token_record.to_account_info()))
-            .payer(&ctx.accounts.owner.to_account_info())
-            .system_program(&ctx.accounts.system_program.to_account_info())
-            .sysvar_instructions(&ctx.accounts.sysvar_instructions.to_account_info())
-            .spl_token_program(Some(&ctx.accounts.spl_token_program.to_account_info()))
-            .invoke_signed(signer_seeds)?;
-
-        // 4) Transfer (delegate PDA is authority)
-        TransferV1CpiBuilder::new(&ctx.accounts.token_metadata_program.to_account_info())
-            .authority(&ctx.accounts.delegate_pda.to_account_info())
-            .token_owner(&ctx.accounts.owner.to_account_info())
-            .token(&ctx.accounts.from_token.to_account_info())
-            .destination_owner(&ctx.accounts.to_owner.to_account_info())
-            .destination_token(&ctx.accounts.to_token.to_account_info())
-            .destination_token_record(Some(&ctx.accounts.to_token_record.to_account_info()))
-            .mint(&ctx.accounts.mint.to_account_info())
-            .metadata(&ctx.accounts.metadata.to_account_info())
-            .edition(Some(&ctx.accounts.master_edition.to_account_info()))
-            .token_record(Some(&ctx.accounts.from_token_record.to_account_info()))
-            .payer(&ctx.accounts.owner.to_account_info())
-            .system_program(&ctx.accounts.system_program.to_account_info())
-            .sysvar_instructions(&ctx.accounts.sysvar_instructions.to_account_info())
-            .spl_token_program(&ctx.accounts.spl_token_program.to_account_info())
-            .invoke_signed(signer_seeds)?;
-
-        // 5) Lock again (now lock destination token record)
-        LockV1CpiBuilder::new(&ctx.accounts.token_metadata_program.to_account_info())
-            .authority(&ctx.accounts.delegate_pda.to_account_info())
-            .token_owner(Some(&ctx.accounts.to_owner.to_account_info()))
-            .token(&ctx.accounts.to_token.to_account_info())
-            .mint(&ctx.accounts.mint.to_account_info())
-            .metadata(&ctx.accounts.metadata.to_account_info())
-            .edition(Some(&ctx.accounts.master_edition.to_account_info()))
-            .token_record(Some(&ctx.accounts.to_token_record.to_account_info()))
-            .payer(&ctx.accounts.owner.to_account_info())
-            .system_program(&ctx.accounts.system_program.to_account_info())
-            .sysvar_instructions(&ctx.accounts.sysvar_instructions.to_account_info())
-            .spl_token_program(Some(&ctx.accounts.spl_token_program.to_account_info()))
-            .invoke_signed(signer_seeds)?;
-
-        Ok(())
-    }
-
     /// Admin forced transfer (bypasses PIN and permit requirements)
     /// Used for recovery of lost/stolen locked NFTs
-    pub fn admin_transfer(ctx: Context<AdminTransfer>, submitted_pin_hash: [u8; 32]) -> Result<()> {
-        // Only admin can perform this transfer
+    pub fn admin_transfer(ctx: Context<AdminTransfer>) -> Result<()> {
+        // Only admin can perform this transfer. The admin-action second factor is
+        // enforced by the `admin_action_signer` account constraint in the context
+        // (its key must equal Config.admin_action_pubkey and it must sign).
         require_keys_eq!(ctx.accounts.admin.key(), ctx.accounts.config.admin, GateError::NotOwner);
-        verify_admin_pin(submitted_pin_hash)?;
 
         // Theft Recovery only works while the NFT is currently locked/delegated to
         // us — delegate_pda's TransferV1 authority comes entirely from that
@@ -358,37 +327,35 @@ pub mod pnft_gate {
         // after every CPI, matching opt_out's own working order -- closing it
         // between two CPIs (as this originally did) tripped the runtime's
         // lamport-conservation check on the next CPI attempt.
-        if let Some(deposit) = &ctx.accounts.lock_deposit {
-            deposit.close(ctx.accounts.admin.to_account_info())?;
-        }
+        close_pda_if_exists(
+            &ctx.accounts.lock_deposit.to_account_info(),
+            &ctx.accounts.admin.to_account_info(),
+            ctx.program_id,
+        )?;
+
+        // Close the from_owner's passphrase account too — the NFT has left them, so
+        // their pin is stale. Keeps the pin lifecycle tied to the lock lifecycle
+        // (same as opt_out), so the recovered NFT can be re-locked cleanly without
+        // tripping set_pin's overwrite guard (rent refunded to from_owner).
+        close_pda_if_exists(
+            &ctx.accounts.pin.to_account_info(),
+            &ctx.accounts.from_owner.to_account_info(),
+            ctx.program_id,
+        )?;
 
         Ok(())
     }
 
-    /// User opt-out: unlock (after that they can revoke delegate + transfer freely)
-    pub fn opt_out(ctx: Context<OptOut>, submitted_pin_hash: Option<[u8; 32]>) -> Result<()> {
-        // Hybrid PIN check: if a PinHash genuinely exists on-chain → verify it,
-        // if not → skip. Existence is checked via data_is_empty() on the
-        // always-seeds-constrained account, not an Option<Account> -- see the
-        // account struct's doc comment for why.
-        // This always runs, admin included -- opt_out is the holder's own
-        // self-service unlock, not an admin action, so signing with the admin
-        // wallet must never bypass it. Admin-assisted recovery (holder forgot
-        // their PIN) has its own dedicated instruction, admin_unlock, with its
-        // own separate admin-action PIN check.
-        if !ctx.accounts.pin_hash_account.data_is_empty() {
-            // See the identical note in transfer_with_permit for why this reads
-            // pin_hash directly rather than via Account<PinHash>.
-            let data = ctx.accounts.pin_hash_account.try_borrow_data()?;
-            require!(data.len() >= 104, GateError::InvalidPin);
-            let mut stored_pin_hash = [0u8; 32];
-            stored_pin_hash.copy_from_slice(&data[72..104]);
-            drop(data);
-
-            let submitted = submitted_pin_hash.ok_or(GateError::PinRequired)?;
-            require!(submitted == stored_pin_hash, GateError::InvalidPin);
-        }
-
+    /// User opt-out: unlock (after that they can revoke delegate + transfer freely).
+    ///
+    /// The holder proves knowledge of their passphrase by SIGNING with the
+    /// passphrase-derived key (the `passphrase_signer` account), whose public key
+    /// must equal the one stored on-chain in the `pin` account. This is enforced
+    /// entirely by the context constraint — a stolen wallet key alone cannot
+    /// produce this signature, so it can no longer unlock. There is no hash to
+    /// submit or replay. Admin-assisted recovery for a forgotten passphrase has
+    /// its own instruction (admin_unlock), gated by the admin-action key instead.
+    pub fn opt_out(ctx: Context<OptOut>) -> Result<()> {
         let bump = ctx.bumps.delegate_pda;
         let mint_key = ctx.accounts.mint.key();
         let signer_seeds: &[&[&[u8]]] = &[&[
@@ -427,12 +394,15 @@ pub mod pnft_gate {
             .spl_token_program(Some(&ctx.accounts.spl_token_program.to_account_info()))
             .invoke()?;
 
-        // Refund the refundable half of the lock fee, if one exists — NFTs locked
-        // before this feature shipped won't have a LockDeposit PDA, so this is
-        // skipped gracefully rather than erroring.
-        if let Some(deposit) = &ctx.accounts.lock_deposit {
-            deposit.close(ctx.accounts.owner.to_account_info())?;
-        }
+        // Refund the refundable half of the lock fee to the holder and GUARANTEE
+        // the deposit is closed (seed-bound account, closed if it exists). This
+        // can never be skipped, so no stale deposit is left to brick a future
+        // opt_in on this mint (Medium #7).
+        close_pda_if_exists(
+            &ctx.accounts.lock_deposit.to_account_info(),
+            &ctx.accounts.owner.to_account_info(),
+            ctx.program_id,
+        )?;
 
         Ok(())
     }
@@ -444,9 +414,10 @@ pub mod pnft_gate {
     /// already relies on. Requires the admin action PIN as an extra safety check on
     /// top of the wallet signature. Refunds any refundable lock deposit to the
     /// original locker.
-    pub fn admin_unlock(ctx: Context<AdminUnlock>, submitted_pin_hash: [u8; 32]) -> Result<()> {
+    pub fn admin_unlock(ctx: Context<AdminUnlock>) -> Result<()> {
+        // Admin + admin-action second factor (the latter enforced by the
+        // admin_action_signer account constraint in the context).
         require_keys_eq!(ctx.accounts.admin.key(), ctx.accounts.config.admin, GateError::NotOwner);
-        verify_admin_pin(submitted_pin_hash)?;
 
         let bump = ctx.bumps.delegate_pda;
         let mint_key = ctx.accounts.mint.key();
@@ -488,33 +459,105 @@ pub mod pnft_gate {
             .spl_token_program(Some(&ctx.accounts.spl_token_program.to_account_info()))
             .invoke_signed(signer_seeds)?;
 
-        if let Some(deposit) = &ctx.accounts.lock_deposit {
-            deposit.close(ctx.accounts.owner.to_account_info())?;
-        }
+        close_pda_if_exists(
+            &ctx.accounts.lock_deposit.to_account_info(),
+            &ctx.accounts.owner.to_account_info(),
+            ctx.program_id,
+        )?;
+
+        // Close the passphrase account too, so after an admin unlock the holder can
+        // re-lock with a fresh passphrase (pin lifecycle = lock lifecycle). Without
+        // this, the stale pin would trip set_pin's overwrite guard on re-lock.
+        close_pda_if_exists(
+            &ctx.accounts.pin.to_account_info(),
+            &ctx.accounts.owner.to_account_info(),
+            ctx.program_id,
+        )?;
 
         Ok(())
     }
 
-    /// User sets their PIN hash on-chain (per-NFT)
-    /// The PIN is hashed client-side (Argon2id) before being sent
-    pub fn set_pin(ctx: Context<SetPin>, pin_hash: [u8; 32]) -> Result<()> {
+    /// User sets (or changes) their passphrase for an NFT, per-NFT.
+    ///
+    /// The client derives an ed25519 keypair from Argon2id(passphrase) and sends
+    /// only the PUBLIC key here. The private key is never stored or transmitted —
+    /// it's regenerated in the browser from the typed passphrase each time it's
+    /// needed to sign an unlock. Storing a public key is safe even though accounts
+    /// are world-readable: you cannot sign with a public key.
+    ///
+    /// Overwrite guard (Critical #2): if a passphrase is already set, the CURRENT
+    /// passphrase key must sign (`old_passphrase_signer`) to change it. This stops
+    /// a thief who has only the wallet key from rotating the passphrase out from
+    /// under the owner. First-time set needs no old signer. Admins reset a
+    /// forgotten passphrase via `admin_reset_pin`, not here.
+    pub fn set_pin(ctx: Context<SetPin>, new_passphrase_pubkey: Pubkey) -> Result<()> {
         let pin_account = &mut ctx.accounts.pin_hash;
+
+        if pin_account.passphrase_pubkey != Pubkey::default() {
+            let old_signer = ctx
+                .accounts
+                .old_passphrase_signer
+                .as_ref()
+                .ok_or(GateError::PinRequired)?;
+            require_keys_eq!(
+                old_signer.key(),
+                pin_account.passphrase_pubkey,
+                GateError::InvalidPin
+            );
+        }
+
         pin_account.owner = ctx.accounts.owner.key();
         pin_account.mint = ctx.accounts.mint.key();
-        pin_account.pin_hash = pin_hash;
+        pin_account.passphrase_pubkey = new_passphrase_pubkey;
+        Ok(())
+    }
+
+    /// Admin resets a holder's passphrase key (recovery for a forgotten
+    /// passphrase). Gated by admin + admin-action signature. Closes the pin
+    /// account (rent back to the holder) so they can set a fresh passphrase.
+    pub fn admin_reset_pin(ctx: Context<AdminResetPin>) -> Result<()> {
+        require_keys_eq!(ctx.accounts.admin.key(), ctx.accounts.config.admin, GateError::NotOwner);
+        // admin-action second factor enforced by the context.
+        //
+        // Close the pin account BY SEEDS rather than by deserializing it as a
+        // typed account. The pin_hash account is a seeds-constrained
+        // UncheckedAccount, so this recovers any stale passphrase account for
+        // (owner, mint) regardless of its stored layout/discriminator (e.g. legacy
+        // accounts from before a struct rename). Standard manual close: drain
+        // lamports to the owner, zero the data, hand the account back to the
+        // System Program. No-op if there's nothing owned by us to close.
+        let pin_ai = ctx.accounts.pin_hash.to_account_info();
+        if pin_ai.owner == ctx.program_id {
+            let owner_ai = ctx.accounts.owner.to_account_info();
+            let lamports = pin_ai.lamports();
+            **owner_ai.try_borrow_mut_lamports()? =
+                owner_ai.lamports().checked_add(lamports).unwrap();
+            **pin_ai.try_borrow_mut_lamports()? = 0;
+            pin_ai.assign(&system_program::ID);
+            pin_ai.realloc(0, false)?;
+        }
         Ok(())
     }
 
     /// Update metadata - delegated to NFT holder
     /// Allows the current holder of an NFT to update its metadata
     /// The program must be set as the update authority for the NFT
+    /// Rename an NFT. The holder may ONLY change the `name`; symbol, uri (the
+    /// art/metadata), creators/royalties and seller_fee are carried forward from
+    /// the current on-chain metadata and cannot be altered here (finding #4 —
+    /// previously the holder could rewrite uri/symbol/creators and force a 500 bps
+    /// royalty). token_record is now address-bound in the context (finding #5), so
+    /// the lock/listed guard below can't be bypassed with a spoofed account.
     pub fn update_metadata_delegated(
         ctx: Context<UpdateMetadataDelegated>,
         name: String,
-        symbol: String,
-        uri: String,
-        creators_data: Vec<CreatorInput>,
     ) -> Result<()> {
+        // Collection gate (defense-in-depth alongside the update-authority check).
+        require_in_collection(
+            &ctx.accounts.metadata.to_account_info(),
+            &ctx.accounts.config.collection_mint,
+        )?;
+
         // Reject if NFT is currently locked or listed on the marketplace.
         // Token record byte 2 = state: 0=Unlocked, 1=Locked, 2=Listed -- matches
         // mpl_token_metadata::types::TokenState's real discriminant order. This
@@ -601,9 +644,14 @@ pub mod pnft_gate {
             &[bump],
         ]];
 
-        // Build update instruction via CPI
-        // Note: name, symbol, uri are all required. The calling script
-        // should pre-fill unchanged fields with current values.
+        // Carry forward EVERYTHING except the name from the current on-chain
+        // metadata. Read it directly (can't be spoofed by the caller), so a rename
+        // can never change the art (uri), symbol, creators/royalties, or seller_fee.
+        let current = {
+            let data = ctx.accounts.metadata.try_borrow_data()?;
+            MplMetadata::from_bytes(&data).map_err(|_| error!(GateError::MetadataReadFailed))?
+        };
+
         UpdateV1CpiBuilder::new(&ctx.accounts.token_metadata_program.to_account_info())
             .authority(&ctx.accounts.metadata_delegate_pda.to_account_info())
             .metadata(&ctx.accounts.metadata.to_account_info())
@@ -613,15 +661,11 @@ pub mod pnft_gate {
             .sysvar_instructions(&ctx.accounts.sysvar_instructions.to_account_info())
             .new_update_authority(ctx.accounts.metadata_delegate_pda.key())
             .data(Data {
-                name,
-                symbol,
-                uri,
-                seller_fee_basis_points: 500,
-                creators: Some(creators_data.into_iter().map(|c| Creator {
-                    address: c.address,
-                    verified: c.verified,
-                    share: c.share,
-                }).collect()),
+                name, // the only field the holder controls
+                symbol: current.symbol,
+                uri: current.uri,
+                seller_fee_basis_points: current.seller_fee_basis_points,
+                creators: current.creators,
             })
             .invoke_signed(signer_seeds)?;
 
@@ -637,6 +681,12 @@ pub mod pnft_gate {
     /// new, so this reset is only ever visible when releasing without an
     /// immediate rename.
     pub fn release_name(ctx: Context<ReleaseName>, _name: String) -> Result<()> {
+        // Collection gate (defense-in-depth).
+        require_in_collection(
+            &ctx.accounts.metadata.to_account_info(),
+            &ctx.accounts.config.collection_mint,
+        )?;
+
         // Reject if NFT is currently locked or listed -- same check as
         // update_metadata_delegated, now that this also CPIs a metadata update.
         let token_record_info = &ctx.accounts.token_record;
@@ -709,20 +759,25 @@ pub mod pnft_gate {
 #[account]
 pub struct Config {
     pub admin: Pubkey,
-    pub backend_signer: Pubkey,
+    /// Public key of the admin-action second factor. Its private key (held only
+    /// in .env) must sign admin_unlock / admin_transfer / admin_reset_pin.
+    pub admin_action_pubkey: Pubkey,
+    /// The collection this program operates on. Locking (opt_in) and renaming are
+    /// restricted to NFTs that are VERIFIED members of this collection, so admin
+    /// recovery power can never reach an NFT outside it. Configurable (set at
+    /// initialize from the deploy config), not hardcoded.
+    pub collection_mint: Pubkey,
 }
 
+/// Stores the PUBLIC KEY derived from a user's passphrase (per-NFT). Unlocking
+/// requires a signature from the matching private key, which is regenerated in
+/// the browser from the passphrase and never stored. A public key is safe to
+/// store in a world-readable account because you cannot sign with it.
 #[account]
-pub struct Nonce {
-    pub used: bool,
-}
-
-/// Stores the Argon2id hash of a user's passphrase for on-chain verification (per-NFT)
-#[account]
-pub struct PinHash {
-    pub owner: Pubkey,      // User who set the passphrase
-    pub mint: Pubkey,       // NFT mint this passphrase is for
-    pub pin_hash: [u8; 32], // Argon2id hash of the passphrase
+pub struct PassphraseKey {
+    pub owner: Pubkey,             // User who set the passphrase
+    pub mint: Pubkey,              // NFT mint this passphrase is for
+    pub passphrase_pubkey: Pubkey, // ed25519 pubkey of Argon2id(passphrase)
 }
 
 /// Refundable half of the lock fee. Its balance is exactly its own rent-exempt
@@ -749,42 +804,14 @@ pub struct DefaultNameRecord {
     pub name: String, // pristine "FH no. <N>" name, captured on first rename
 }
 
-/// Input struct for creator data passed from client
-#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
-pub struct CreatorInput {
-    pub address: Pubkey,
-    pub verified: bool,
-    pub share: u8,
-}
-
-#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
-pub struct Permit {
-    pub mint: Pubkey,
-    pub from_owner: Pubkey,
-    pub to: Pubkey,
-    pub nonce: Pubkey,       // nonce PDA address (unique per transfer)
-    pub expiry_ts: i64,
-    pub signature: [u8; 64], // ed25519 signature over message_bytes()
-}
-
-impl Permit {
-    pub fn message_bytes(&self) -> Vec<u8> {
-        // Stable canonical encoding — keep exact order
-        let mut out = Vec::with_capacity(32 * 4 + 8);
-        out.extend_from_slice(self.mint.as_ref());
-        out.extend_from_slice(self.from_owner.as_ref());
-        out.extend_from_slice(self.to.as_ref());
-        out.extend_from_slice(self.nonce.as_ref());
-        out.extend_from_slice(&self.expiry_ts.to_le_bytes());
-        out
-    }
-}
-
 /* ---------------- Account Contexts ---------------- */
 
 #[derive(Accounts)]
 pub struct Initialize<'info> {
-    #[account(mut)]
+    /// Must be EXPECTED_INITIAL_ADMIN -- see its doc comment. Closes the
+    /// front-run race: only this specific wallet can ever successfully call
+    /// initialize, regardless of who submits the transaction first.
+    #[account(mut, address = EXPECTED_INITIAL_ADMIN)]
     pub admin: Signer<'info>,
     #[account(
         init,
@@ -798,9 +825,41 @@ pub struct Initialize<'info> {
 }
 
 #[derive(Accounts)]
+pub struct CloseConfig<'info> {
+    #[account(mut)]
+    pub admin: Signer<'info>,
+    /// Admin-action second factor (verified against the config's stored bytes in
+    /// the instruction body, since config here is layout-agnostic).
+    pub admin_action_signer: Signer<'info>,
+    /// CHECK: Config PDA — seed-bound; closed manually by seeds (layout-agnostic).
+    #[account(mut, seeds = [b"config_v2"], bump)]
+    pub config: UncheckedAccount<'info>,
+}
+
+#[derive(Accounts)]
 pub struct UpdateAdmin<'info> {
     #[account(mut)]
     pub admin: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [b"config_v2"],
+        bump
+    )]
+    pub config: Account<'info, Config>,
+}
+
+/// Rotating the admin-action key requires TWO independent signatures: the admin
+/// wallet AND the current admin-action key. This prevents a stolen admin wallet
+/// from unilaterally replacing the second factor.
+#[derive(Accounts)]
+pub struct RotateAdminActionKey<'info> {
+    #[account(mut)]
+    pub admin: Signer<'info>,
+
+    /// The CURRENT admin-action key must also sign — independent authorization.
+    #[account(constraint = current_admin_action_signer.key() == config.admin_action_pubkey @ GateError::InvalidAdminPin)]
+    pub current_admin_action_signer: Signer<'info>,
+
     #[account(
         mut,
         seeds = [b"config_v2"],
@@ -822,12 +881,19 @@ pub struct SetPin<'info> {
     #[account(
         init_if_needed,
         payer = owner,
-        space = 8 + std::mem::size_of::<PinHash>(),
+        space = 8 + std::mem::size_of::<PassphraseKey>(),
         seeds = [b"pin", owner.key().as_ref(), mint.key().as_ref()],
         bump
     )]
-    pub pin_hash: Account<'info, PinHash>,
-    
+    pub pin_hash: Account<'info, PassphraseKey>,
+
+    /// The CURRENT passphrase key — required only when changing an existing
+    /// passphrase (overwrite guard). Omitted (None) on first-time set. Anchor
+    /// resolves an absent optional signer to None; the instruction body still
+    /// requires it whenever a passphrase already exists, so a client cannot skip
+    /// the guard by omitting it.
+    pub old_passphrase_signer: Option<Signer<'info>>,
+
     pub system_program: Program<'info, System>,
 }
 
@@ -835,6 +901,10 @@ pub struct SetPin<'info> {
 pub struct OptIn<'info> {
     #[account(mut)]
     pub owner: Signer<'info>,
+
+    /// Program config — provides the collection mint the gate checks against.
+    #[account(seeds = [b"config_v2"], bump)]
+    pub config: Account<'info, Config>,
 
     /// CHECK: Mint account - validated by Token Metadata CPI which verifies
     /// this is a valid mint and matches the metadata/edition PDAs.
@@ -893,104 +963,32 @@ pub struct OptIn<'info> {
 }
 
 #[derive(Accounts)]
-#[instruction(permit: Permit)]
-pub struct TransferWithPermit<'info> {
-    pub config: Account<'info, Config>,
-
-    #[account(mut)]
-    pub owner: Signer<'info>, // from_owner
-
-    /// CHECK: Mint account - validated by Token Metadata CPI and permit field checks.
-    pub mint: UncheckedAccount<'info>,
-
-    /// CHECK: Metadata PDA - derived from mint, validated by Token Metadata CPI.
-    #[account(mut)]
-    pub metadata: UncheckedAccount<'info>,
-    
-    /// CHECK: Master Edition PDA - derived from mint, validated by Token Metadata CPI.
-    pub master_edition: UncheckedAccount<'info>,
-
-    /// CHECK: Source token account - validated by Token Metadata CPI (ownership + delegation).
-    #[account(mut)]
-    pub from_token: UncheckedAccount<'info>,
-    
-    /// CHECK: Source token record - derived from token account, validated by Token Metadata CPI.
-    #[account(mut)]
-    pub from_token_record: UncheckedAccount<'info>,
-
-    /// CHECK: Destination owner - validated via permit field check (permit.to == to_owner).
-    pub to_owner: UncheckedAccount<'info>,
-    
-    /// CHECK: Destination token account - created/validated by Token Metadata transfer CPI.
-    #[account(mut)]
-    pub to_token: UncheckedAccount<'info>,
-    
-    /// CHECK: Destination token record - derived from destination token, validated by CPI.
-    #[account(mut)]
-    pub to_token_record: UncheckedAccount<'info>,
-
-    /// CHECK: Delegate PDA - seeds validated by Anchor constraint.
-    #[account(seeds = [b"delegate", mint.key().as_ref()], bump)]
-    pub delegate_pda: UncheckedAccount<'info>,
-
-    #[account(
-        init,
-        payer = owner,
-        space = 8 + std::mem::size_of::<Nonce>(),
-        seeds = [
-            b"nonce",
-            mint.key().as_ref(),
-            owner.key().as_ref(),
-            permit.nonce.as_ref(),
-        ],
-        bump
-    )]
-    pub nonce: Account<'info, Nonce>,
-
-    /// CHECK: PIN hash PDA for (owner, mint) -- may not exist yet if the
-    /// holder never called set_pin. Deliberately NOT Option<Account>: Anchor
-    /// resolves an Option account to None from a client-supplied sentinel
-    /// (passing the program ID at this slot), not from actual on-chain
-    /// state -- letting a forged "no PIN was ever set" skip the check below
-    /// entirely, even when a real PinHash exists. Always seeds-constrained
-    /// so the address can't be swapped for anything else; existence is
-    /// checked in the instruction body via data_is_empty(), same pattern
-    /// already used for token_record state elsewhere in this file.
-    #[account(
-        seeds = [b"pin", owner.key().as_ref(), mint.key().as_ref()],
-        bump
-    )]
-    pub pin_hash_account: UncheckedAccount<'info>,
-
-    /// CHECK: Token Metadata program - address verified.
-    #[account(address = mpl_token_metadata::ID)]
-    pub token_metadata_program: UncheckedAccount<'info>,
-
-    /// CHECK: SPL Token program - address verified.
-    #[account(address = anchor_spl::token::ID)]
-    pub spl_token_program: UncheckedAccount<'info>,
-
-    pub system_program: Program<'info, System>,
-    
-    /// CHECK: Sysvar Instructions - address validated by Solana runtime.
-    pub sysvar_instructions: UncheckedAccount<'info>,
-}
-
-#[derive(Accounts)]
 pub struct OptOut<'info> {
-    pub config: Account<'info, Config>,
-    
     #[account(mut)]
     pub owner: Signer<'info>,
 
-    /// CHECK: PIN hash PDA for (owner, mint) -- see the identical note in
-    /// TransferWithPermit above for why this is a required, seeds-
-    /// constrained UncheckedAccount rather than Option<Account>.
+    /// The passphrase key record for (owner, mint). Its stored pubkey must equal
+    /// the passphrase_signer below — enforced here by Anchor. Required: every
+    /// locked NFT has one (set_pin runs before opt_in), so a missing account
+    /// correctly fails rather than silently skipping the check.
+    /// Closed on unlock (`close = owner`): the passphrase only needs to exist
+    /// while the NFT is locked. Clearing it here means a later re-lock is a clean
+    /// first-time set_pin, and the set_pin overwrite guard then fires only in the
+    /// real attack case — someone trying to change the passphrase of a still-locked
+    /// NFT (where the account is NOT cleared because no unlock happened).
     #[account(
+        mut,
         seeds = [b"pin", owner.key().as_ref(), mint.key().as_ref()],
-        bump
+        bump,
+        constraint = pin.passphrase_pubkey == passphrase_signer.key() @ GateError::InvalidPin,
+        close = owner
     )]
-    pub pin_hash_account: UncheckedAccount<'info>,
+    pub pin: Account<'info, PassphraseKey>,
+
+    /// The passphrase-derived key. Must sign — proving the caller knows the
+    /// passphrase. A stolen wallet key alone cannot produce this signature, and
+    /// the stored pubkey cannot be replayed (you can't sign with a public key).
+    pub passphrase_signer: Signer<'info>,
 
     /// CHECK: Mint account - validated by Token Metadata CPI.
     pub mint: UncheckedAccount<'info>,
@@ -1023,12 +1021,15 @@ pub struct OptOut<'info> {
 
     /// Refundable lock deposit, if one exists — NFTs locked before this feature
     /// shipped won't have one, so this is optional and skipped gracefully.
+    /// CHECK: refundable lock deposit PDA — seed-bound and closed via
+    /// close_pda_if_exists in the body if present. Required (not Option) so a
+    /// caller can't skip it and leave it behind to brick a future opt_in (#7).
     #[account(
         mut,
         seeds = [b"lock_deposit", mint.key().as_ref()],
         bump
     )]
-    pub lock_deposit: Option<Account<'info, LockDeposit>>,
+    pub lock_deposit: UncheckedAccount<'info>,
 
     /// CHECK: Token Metadata program - address verified.
     #[account(address = mpl_token_metadata::ID)]
@@ -1046,10 +1047,16 @@ pub struct OptOut<'info> {
 
 #[derive(Accounts)]
 pub struct AdminUnlock<'info> {
+    #[account(seeds = [b"config_v2"], bump)]
     pub config: Account<'info, Config>,
 
     #[account(mut)]
     pub admin: Signer<'info>,
+
+    /// Admin-action second factor. Must sign and match Config.admin_action_pubkey.
+    /// Replaces the old compiled-in PIN hash; the private key lives only in .env.
+    #[account(constraint = admin_action_signer.key() == config.admin_action_pubkey @ GateError::InvalidAdminPin)]
+    pub admin_action_signer: Signer<'info>,
 
     /// CHECK: The NFT holder — doesn't need to sign. delegate_pda's own authority
     /// (granted back when they originally locked) authorizes the unlock; this
@@ -1086,13 +1093,21 @@ pub struct AdminUnlock<'info> {
     #[account(seeds = [b"delegate", mint.key().as_ref()], bump)]
     pub delegate_pda: UncheckedAccount<'info>,
 
+    /// CHECK: the holder's passphrase account — closed by seeds on unlock so a
+    /// fresh re-lock isn't blocked by set_pin's overwrite guard.
+    #[account(mut, seeds = [b"pin", owner.key().as_ref(), mint.key().as_ref()], bump)]
+    pub pin: UncheckedAccount<'info>,
+
     /// Refundable lock deposit, if one exists.
+    /// CHECK: refundable lock deposit PDA — seed-bound and closed via
+    /// close_pda_if_exists in the body if present. Required (not Option) so a
+    /// caller can't skip it and leave it behind to brick a future opt_in (#7).
     #[account(
         mut,
         seeds = [b"lock_deposit", mint.key().as_ref()],
         bump
     )]
-    pub lock_deposit: Option<Account<'info, LockDeposit>>,
+    pub lock_deposit: UncheckedAccount<'info>,
 
     /// CHECK: Token Metadata program - address verified.
     #[account(address = mpl_token_metadata::ID)]
@@ -1110,10 +1125,15 @@ pub struct AdminUnlock<'info> {
 
 #[derive(Accounts)]
 pub struct AdminTransfer<'info> {
+    #[account(seeds = [b"config_v2"], bump)]
     pub config: Account<'info, Config>,
 
     #[account(mut)]
     pub admin: Signer<'info>,
+
+    /// Admin-action second factor. Must sign and match Config.admin_action_pubkey.
+    #[account(constraint = admin_action_signer.key() == config.admin_action_pubkey @ GateError::InvalidAdminPin)]
+    pub admin_action_signer: Signer<'info>,
 
     /// CHECK: The user we are taking the NFT from. Must be mut -- UnlockV1's
     /// token_owner can receive lamport adjustments during unlock (same
@@ -1160,14 +1180,22 @@ pub struct AdminTransfer<'info> {
     #[account(seeds = [b"delegate", mint.key().as_ref()], bump)]
     pub delegate_pda: UncheckedAccount<'info>,
 
+    /// CHECK: the from_owner's passphrase account — closed by seeds so the
+    /// recovered-from wallet's stale pin doesn't block a later re-lock.
+    #[account(mut, seeds = [b"pin", from_owner.key().as_ref(), mint.key().as_ref()], bump)]
+    pub pin: UncheckedAccount<'info>,
+
     /// Refundable lock deposit, if one exists — refunded to admin (this is a
     /// theft-recovery override, not a normal unlock).
+    /// CHECK: refundable lock deposit PDA — seed-bound and closed via
+    /// close_pda_if_exists in the body if present. Required (not Option) so a
+    /// caller can't skip it and leave it behind to brick a future opt_in (#7).
     #[account(
         mut,
         seeds = [b"lock_deposit", mint.key().as_ref()],
         bump
     )]
-    pub lock_deposit: Option<Account<'info, LockDeposit>>,
+    pub lock_deposit: UncheckedAccount<'info>,
 
     /// CHECK: Token Metadata program - address verified.
     #[account(address = mpl_token_metadata::ID)]
@@ -1188,20 +1216,55 @@ pub struct AdminTransfer<'info> {
 }
 
 #[derive(Accounts)]
+pub struct AdminResetPin<'info> {
+    #[account(seeds = [b"config_v2"], bump)]
+    pub config: Account<'info, Config>,
+
+    #[account(mut)]
+    pub admin: Signer<'info>,
+
+    /// Admin-action second factor. Must sign and match Config.admin_action_pubkey.
+    #[account(constraint = admin_action_signer.key() == config.admin_action_pubkey @ GateError::InvalidAdminPin)]
+    pub admin_action_signer: Signer<'info>,
+
+    /// CHECK: The holder whose passphrase is being reset — receives the rent
+    /// refund from the closed pin account. Used in the pin PDA seeds.
+    #[account(mut)]
+    pub owner: UncheckedAccount<'info>,
+
+    /// CHECK: Mint account — part of the pin PDA seeds.
+    pub mint: UncheckedAccount<'info>,
+
+    /// CHECK: The passphrase key PDA to clear. Seeds-constrained and closed
+    /// manually in the instruction body (by seeds, not by type) so it works for
+    /// any stored layout, including legacy pre-rename accounts.
+    #[account(
+        mut,
+        seeds = [b"pin", owner.key().as_ref(), mint.key().as_ref()],
+        bump
+    )]
+    pub pin_hash: UncheckedAccount<'info>,
+}
+
+#[derive(Accounts)]
 #[instruction(name: String)]
 pub struct UpdateMetadataDelegated<'info> {
     #[account(mut)]
     pub holder: Signer<'info>,  // NFT holder calling the update
+
+    /// Program config — provides the collection mint the gate checks against.
+    #[account(seeds = [b"config_v2"], bump)]
+    pub config: Box<Account<'info, Config>>,
     
     /// The NFT mint
-    pub mint: Account<'info, Mint>,
+    pub mint: Box<Account<'info, Mint>>,
     
     /// Holder's token account - proves ownership
     #[account(
         associated_token::mint = mint,
         associated_token::authority = holder,
     )]
-    pub token_account: Account<'info, TokenAccount>,
+    pub token_account: Box<Account<'info, TokenAccount>>,
     
     /// CHECK: Metadata PDA - derived from mint, validated by Token Metadata CPI.
     #[account(mut)]
@@ -1225,7 +1288,7 @@ pub struct UpdateMetadataDelegated<'info> {
         seeds = [b"name_record", name.to_lowercase().as_bytes()],
         bump
     )]
-    pub name_record: Account<'info, NameRecord>,
+    pub name_record: Box<Account<'info, NameRecord>>,
 
     /// Snapshot of this mint's factory-default name -- created once, on the
     /// first-ever rename, and never overwritten after. See update_metadata_delegated.
@@ -1236,9 +1299,22 @@ pub struct UpdateMetadataDelegated<'info> {
         seeds = [b"default_name", mint.key().as_ref()],
         bump
     )]
-    pub default_name_record: Account<'info, DefaultNameRecord>,
+    pub default_name_record: Box<Account<'info, DefaultNameRecord>>,
 
-    /// CHECK: pNFT token record PDA - used to check listing state before allowing updates.
+    /// CHECK: pNFT token record PDA — address-bound to the real Metaplex PDA for
+    /// (mint, token_account) so the lock/listed check can't be bypassed with a
+    /// spoofed or empty account (finding #5).
+    #[account(
+        seeds = [
+            b"metadata",
+            mpl_token_metadata::ID.as_ref(),
+            mint.key().as_ref(),
+            b"token_record",
+            token_account.key().as_ref(),
+        ],
+        bump,
+        seeds::program = mpl_token_metadata::ID
+    )]
     pub token_record: UncheckedAccount<'info>,
 
     /// CHECK: Token Metadata program - address verified.
@@ -1261,6 +1337,10 @@ pub struct UpdateMetadataDelegated<'info> {
 pub struct ReleaseName<'info> {
     #[account(mut)]
     pub holder: Signer<'info>,
+
+    /// Program config — provides the collection mint the gate checks against.
+    #[account(seeds = [b"config_v2"], bump)]
+    pub config: Account<'info, Config>,
 
     /// The NFT mint
     pub mint: Account<'info, Mint>,
@@ -1302,7 +1382,20 @@ pub struct ReleaseName<'info> {
     )]
     pub metadata_delegate_pda: UncheckedAccount<'info>,
 
-    /// CHECK: pNFT token record PDA - used to check listing/lock state before allowing updates.
+    /// CHECK: pNFT token record PDA — address-bound to the real Metaplex PDA for
+    /// (mint, token_account) so the lock/listed check can't be bypassed with a
+    /// spoofed or empty account (finding #5).
+    #[account(
+        seeds = [
+            b"metadata",
+            mpl_token_metadata::ID.as_ref(),
+            mint.key().as_ref(),
+            b"token_record",
+            token_account.key().as_ref(),
+        ],
+        bump,
+        seeds::program = mpl_token_metadata::ID
+    )]
     pub token_record: UncheckedAccount<'info>,
 
     /// CHECK: Token Metadata program - address verified.
@@ -1322,24 +1415,12 @@ pub struct ReleaseName<'info> {
 
 #[error_code]
 pub enum GateError {
-    #[msg("Bad permit")]
-    BadPermit,
-    #[msg("Permit expired")]
-    PermitExpired,
-    #[msg("Nonce already used")]
-    NonceUsed,
-    #[msg("Missing or invalid ed25519 verify instruction")]
-    BadEd25519Ix,
-    #[msg("PIN not set - user must set PIN first")]
-    PinNotSet,
-    #[msg("PIN required for non-admin users")]
+    #[msg("Passphrase signature required to change an existing passphrase")]
     PinRequired,
-    #[msg("Invalid PIN")]
+    #[msg("Invalid passphrase")]
     InvalidPin,
     #[msg("Caller does not own this NFT")]
     NotOwner,
-    #[msg("Unauthorized caller - not the authorized auction house")]
-    UnauthorizedCaller,
     #[msg("Name is already taken by another NFT")]
     NameTaken,
     #[msg("NFT is currently listed for sale -- cancel listing first")]
@@ -1354,104 +1435,6 @@ pub enum GateError {
     ReservedName,
     #[msg("Failed to read NFT metadata")]
     MetadataReadFailed,
+    #[msg("NFT is not a verified member of this collection")]
+    NotInCollection,
 }
-
-/* ---------------- Ed25519 Signature Verification ---------------- */
-
-/// Ed25519 instruction data offsets layout (14 bytes per signature).
-/// See: https://docs.solana.com/developing/runtime-facilities/programs#ed25519-program
-const ED25519_OFFSETS_START: usize = 2; // after num_signatures(1) + padding(1)
-const ED25519_OFFSETS_SIZE: usize = 14; // 7 x u16 fields
-
-/// Verify that an Ed25519Program instruction exists in the transaction
-/// that validates the permit signature from the backend signer.
-///
-/// Fully parses the Ed25519 instruction data to verify:
-/// - The public key matches `backend_signer`
-/// - The message matches the permit's canonical encoding
-/// - The signature matches the permit's signature
-///
-/// Client must include Ed25519Program.createInstructionWithPublicKey()
-/// as the first instruction before calling this program.
-fn verify_ed25519_signature(
-    sysvar_instructions: &AccountInfo,
-    backend_signer: &Pubkey,
-    message: &[u8],
-    expected_signature: &[u8; 64],
-) -> Result<()> {
-    use anchor_lang::solana_program::sysvar::instructions::{
-        load_current_index_checked,
-        load_instruction_at_checked,
-    };
-    use anchor_lang::solana_program::ed25519_program;
-
-    let ed25519_program_id = ed25519_program::ID;
-    let current_ix_index = load_current_index_checked(sysvar_instructions)?;
-
-    // Search all preceding instructions for a matching Ed25519 verify instruction
-    for ix_index in 0..current_ix_index {
-        let ix = load_instruction_at_checked(ix_index as usize, sysvar_instructions)?;
-
-        if ix.program_id != ed25519_program_id {
-            continue;
-        }
-
-        // Minimum size: 2-byte header + 14-byte offsets struct
-        if ix.data.len() < ED25519_OFFSETS_START + ED25519_OFFSETS_SIZE {
-            continue;
-        }
-
-        let num_signatures = ix.data[0];
-        if num_signatures != 1 {
-            continue;
-        }
-
-        // Parse Ed25519SignatureOffsets (7 x u16, little-endian)
-        // Layout: signature_offset(2) + signature_ix_index(2) +
-        //         pubkey_offset(2) + pubkey_ix_index(2) +
-        //         message_data_offset(2) + message_data_size(2) +
-        //         message_ix_index(2)
-        let offsets = &ix.data[ED25519_OFFSETS_START..];
-
-        let signature_offset = u16::from_le_bytes([offsets[0], offsets[1]]) as usize;
-        // offsets[2..4] = signature_instruction_index (skip — must be in same ix)
-        let pubkey_offset = u16::from_le_bytes([offsets[4], offsets[5]]) as usize;
-        // offsets[6..8] = pubkey_instruction_index (skip)
-        let message_offset = u16::from_le_bytes([offsets[8], offsets[9]]) as usize;
-        let message_size = u16::from_le_bytes([offsets[10], offsets[11]]) as usize;
-        // offsets[12..14] = message_instruction_index (skip)
-
-        // --- Validate signature (64 bytes) ---
-        if ix.data.len() < signature_offset + 64 {
-            continue;
-        }
-        let sig_in_ix = &ix.data[signature_offset..signature_offset + 64];
-        if sig_in_ix != expected_signature.as_ref() {
-            continue;
-        }
-
-        // --- Validate public key (32 bytes) ---
-        if ix.data.len() < pubkey_offset + 32 {
-            continue;
-        }
-        let pubkey_in_ix = &ix.data[pubkey_offset..pubkey_offset + 32];
-        if pubkey_in_ix != backend_signer.as_ref() {
-            continue;
-        }
-
-        // --- Validate message ---
-        if ix.data.len() < message_offset + message_size {
-            continue;
-        }
-        let message_in_ix = &ix.data[message_offset..message_offset + message_size];
-        if message_in_ix != message {
-            continue;
-        }
-
-        // All three components match — valid ed25519 verification instruction
-        return Ok(());
-    }
-
-    Err(GateError::BadEd25519Ix.into())
-}
-
