@@ -133,7 +133,10 @@ pub mod pnft_gate {
         Ok(())
     }
 
-    /// Update the admin address (only callable by current admin)
+    /// Update the admin address. Requires BOTH the current admin wallet AND the
+    /// current admin-action key to sign — a stolen admin wallet alone can NOT
+    /// hijack Config.admin and lock out the real owner (same independent-
+    /// authorization pattern as update_admin_action_key).
     pub fn update_admin(ctx: Context<UpdateAdmin>, new_admin: Pubkey) -> Result<()> {
         let cfg = &mut ctx.accounts.config;
         require_keys_eq!(ctx.accounts.admin.key(), cfg.admin, GateError::NotOwner);
@@ -838,14 +841,23 @@ pub struct CloseConfig<'info> {
 
 #[derive(Accounts)]
 pub struct UpdateAdmin<'info> {
-    #[account(mut)]
-    pub admin: Signer<'info>,
     #[account(
         mut,
         seeds = [b"config_v2"],
         bump
     )]
     pub config: Account<'info, Config>,
+
+    #[account(mut)]
+    pub admin: Signer<'info>,
+
+    /// Admin-action second factor. Must sign and match Config.admin_action_pubkey.
+    /// Without this, a compromised admin wallet alone could permanently hijack
+    /// Config.admin (this was the one admin instruction NOT already gated by the
+    /// passphrase co-signer, unlike admin_transfer/admin_unlock/admin_reset_pin/
+    /// update_admin_action_key).
+    #[account(constraint = admin_action_signer.key() == config.admin_action_pubkey @ GateError::InvalidAdminPin)]
+    pub admin_action_signer: Signer<'info>,
 }
 
 /// Rotating the admin-action key requires TWO independent signatures: the admin
