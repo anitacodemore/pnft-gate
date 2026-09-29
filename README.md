@@ -8,12 +8,20 @@ actual signature from the matching private key (regenerated client-side
 from the passphrase each time). The NFT stays locked (non-transferable)
 until that signature is produced.
 
-This repo exists as the target for Forever Harambe's bug bounty. If you find
-a way to unlock, transfer, or otherwise compromise a locked NFT without the
-correct passphrase (or a way to compromise the admin/authority flows), see
-the live bounty page for current scope, reward, and how to claim:
+This repo exists as the target for Forever Harambe's bug bounty. The live
+target NFT is genuinely locked through this program, with a passphrase nobody
+— including the team — has recorded anywhere. If you find a way to unlock,
+transfer, or otherwise compromise it without the correct passphrase (or a way
+to compromise the admin/authority flows), see the live bounty page for current
+scope, reward, and how to claim:
 
 **https://foreverharambe.xyz/bounty**
+
+Note: the target's vault wallet is a normal SPL owner, but its private key is
+deliberately not published — `opt_out` only unfreezes and revokes the delegate,
+it doesn't move the NFT, so a shared wallet key would let anyone race the
+actual unlock and grab the piece before whoever did the work could. Holding
+that key isn't part of the challenge; defeating the passphrase check is.
 
 ## What's in this repo
 
