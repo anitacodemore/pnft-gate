@@ -914,15 +914,36 @@ pub struct OptIn<'info> {
     #[account(mut)]
     pub token: UncheckedAccount<'info>,
 
-    /// CHECK: Metadata PDA - derived from mint, validated by Token Metadata CPI.
-    #[account(mut)]
+    /// CHECK: Metadata PDA — address-bound to the real Metaplex PDA for `mint`
+    /// (finding #5's fix, extended here) so it can't be a spoofed/unrelated
+    /// account; downstream CPIs already re-validate this internally, but we
+    /// shouldn't depend solely on a third party's own checks for it.
+    #[account(
+        mut,
+        seeds = [b"metadata", mpl_token_metadata::ID.as_ref(), mint.key().as_ref()],
+        bump,
+        seeds::program = mpl_token_metadata::ID
+    )]
     pub metadata: UncheckedAccount<'info>,
-    
+
     /// CHECK: Master Edition PDA - derived from mint, validated by Token Metadata CPI.
     pub master_edition: UncheckedAccount<'info>,
 
-    /// CHECK: pNFT token record PDA - derived from token account, validated by Token Metadata CPI.
-    #[account(mut)]
+    /// CHECK: pNFT token record PDA — address-bound to the real Metaplex PDA
+    /// for (mint, token) so a mismatched/spoofed account can't feed a false
+    /// locked/listed reading into the checks above.
+    #[account(
+        mut,
+        seeds = [
+            b"metadata",
+            mpl_token_metadata::ID.as_ref(),
+            mint.key().as_ref(),
+            b"token_record",
+            token.key().as_ref(),
+        ],
+        bump,
+        seeds::program = mpl_token_metadata::ID
+    )]
     pub token_record: UncheckedAccount<'info>,
 
     /// CHECK: Token Metadata delegate record PDA - created/validated by Token Metadata CPI.
@@ -1000,15 +1021,32 @@ pub struct OptOut<'info> {
     #[account(mut, constraint = token.owner == owner.key() @ GateError::NotOwner)]
     pub token: Account<'info, TokenAccount>,
 
-    /// CHECK: Metadata PDA - derived from mint, validated by Token Metadata CPI.
-    #[account(mut)]
+    /// CHECK: Metadata PDA — address-bound to the real Metaplex PDA for `mint`.
+    #[account(
+        mut,
+        seeds = [b"metadata", mpl_token_metadata::ID.as_ref(), mint.key().as_ref()],
+        bump,
+        seeds::program = mpl_token_metadata::ID
+    )]
     pub metadata: UncheckedAccount<'info>,
 
     /// CHECK: Master Edition PDA - derived from mint, validated by Token Metadata CPI.
     pub master_edition: UncheckedAccount<'info>,
 
-    /// CHECK: Token record PDA - derived from token account, validated by Token Metadata CPI.
-    #[account(mut)]
+    /// CHECK: Token record PDA — address-bound to the real Metaplex PDA for
+    /// (mint, token).
+    #[account(
+        mut,
+        seeds = [
+            b"metadata",
+            mpl_token_metadata::ID.as_ref(),
+            mint.key().as_ref(),
+            b"token_record",
+            token.key().as_ref(),
+        ],
+        bump,
+        seeds::program = mpl_token_metadata::ID
+    )]
     pub token_record: UncheckedAccount<'info>,
 
     /// CHECK: Delegate record PDA - derived from token account + delegate PDA.
@@ -1074,15 +1112,33 @@ pub struct AdminUnlock<'info> {
     #[account(mut, constraint = token.owner == owner.key() @ GateError::NotOwner)]
     pub token: Account<'info, TokenAccount>,
 
-    /// CHECK: Metadata PDA - validated by Token Metadata CPI.
-    #[account(mut)]
+    /// CHECK: Metadata PDA — address-bound to the real Metaplex PDA for `mint`.
+    #[account(
+        mut,
+        seeds = [b"metadata", mpl_token_metadata::ID.as_ref(), mint.key().as_ref()],
+        bump,
+        seeds::program = mpl_token_metadata::ID
+    )]
     pub metadata: UncheckedAccount<'info>,
 
     /// CHECK: Master Edition PDA - validated by Token Metadata CPI.
     pub master_edition: UncheckedAccount<'info>,
 
-    /// CHECK: Token record PDA - validated by Token Metadata CPI.
-    #[account(mut)]
+    /// CHECK: Token record PDA — address-bound to the real Metaplex PDA for
+    /// (mint, token) so a mismatched/spoofed account can't feed a false
+    /// locked/listed reading into the checks above.
+    #[account(
+        mut,
+        seeds = [
+            b"metadata",
+            mpl_token_metadata::ID.as_ref(),
+            mint.key().as_ref(),
+            b"token_record",
+            token.key().as_ref(),
+        ],
+        bump,
+        seeds::program = mpl_token_metadata::ID
+    )]
     pub token_record: UncheckedAccount<'info>,
 
     /// CHECK: Delegate record PDA - validated by Token Metadata CPI.
@@ -1145,30 +1201,60 @@ pub struct AdminTransfer<'info> {
     /// CHECK: Mint account - validated by CPI.
     pub mint: UncheckedAccount<'info>,
 
-    /// CHECK: Metadata PDA - validated by CPI.
-    #[account(mut)]
+    /// CHECK: Metadata PDA — address-bound to the real Metaplex PDA for `mint`.
+    #[account(
+        mut,
+        seeds = [b"metadata", mpl_token_metadata::ID.as_ref(), mint.key().as_ref()],
+        bump,
+        seeds::program = mpl_token_metadata::ID
+    )]
     pub metadata: UncheckedAccount<'info>,
-    
+
     /// CHECK: Master Edition PDA - validated by CPI.
     pub master_edition: UncheckedAccount<'info>,
 
     /// CHECK: Source token account.
     #[account(mut)]
     pub from_token: UncheckedAccount<'info>,
-    
-    /// CHECK: Source token record.
-    #[account(mut)]
+
+    /// CHECK: Source token record — address-bound to the real Metaplex PDA
+    /// for (mint, from_token) so a mismatched/spoofed account can't feed a
+    /// false locked/listed reading into the checks above.
+    #[account(
+        mut,
+        seeds = [
+            b"metadata",
+            mpl_token_metadata::ID.as_ref(),
+            mint.key().as_ref(),
+            b"token_record",
+            from_token.key().as_ref(),
+        ],
+        bump,
+        seeds::program = mpl_token_metadata::ID
+    )]
     pub from_token_record: UncheckedAccount<'info>,
 
     /// CHECK: Destination owner.
     pub to_owner: UncheckedAccount<'info>,
-    
+
     /// CHECK: Destination token account.
     #[account(mut)]
     pub to_token: UncheckedAccount<'info>,
-    
-    /// CHECK: Destination token record.
-    #[account(mut)]
+
+    /// CHECK: Destination token record — address-bound to the real Metaplex
+    /// PDA for (mint, to_token), for the same reason as from_token_record.
+    #[account(
+        mut,
+        seeds = [
+            b"metadata",
+            mpl_token_metadata::ID.as_ref(),
+            mint.key().as_ref(),
+            b"token_record",
+            to_token.key().as_ref(),
+        ],
+        bump,
+        seeds::program = mpl_token_metadata::ID
+    )]
     pub to_token_record: UncheckedAccount<'info>,
 
     /// CHECK: Delegate record PDA - existence signals whether this NFT is
