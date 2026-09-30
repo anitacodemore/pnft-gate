@@ -18,10 +18,13 @@ scope, reward, and how to claim:
 **https://foreverharambe.xyz/bounty**
 
 Note: the target's vault wallet is a normal SPL owner, but its private key is
-deliberately not published — `opt_out` only unfreezes and revokes the delegate,
+never published outright — `opt_out` only unfreezes and revokes the delegate,
 it doesn't move the NFT, so a shared wallet key would let anyone race the
-actual unlock and grab the piece before whoever did the work could. Holding
-that key isn't part of the challenge; defeating the passphrase check is.
+actual unlock and grab the piece before whoever did the work could. Instead,
+the vault's own seed phrase is separately encrypted and recoverable through a
+brute-forceable puzzle of its own (see the bounty page for details) — either
+way, defeating *this* program's passphrase check is still the actual, final
+obstacle to moving the NFT.
 
 ## What's in this repo
 
