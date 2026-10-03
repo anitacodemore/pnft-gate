@@ -52,12 +52,12 @@ const LOCK_FEE_TREASURY_LAMPORTS: u64 = 18_601_040;
 const RENAME_FEE_TREASURY_LAMPORTS: u64 = 48_830_720;
 
 /// True if `name` matches the collection's reserved default-numbering format
-/// ("FH no. <digits>", case-insensitive). Rejected as a target for ordinary
+/// ("VM no. <digits>", case-insensitive). Rejected as a target for ordinary
 /// renames so nobody can squat another mint's factory-default name -- the
 /// only path allowed to (re)claim this format is release_name's own
 /// revert-to-default CPI, which never calls through here.
 fn is_reserved_default_name(name: &str) -> bool {
-    match name.to_lowercase().strip_prefix("fh no. ") {
+    match name.to_lowercase().strip_prefix("vm no. ") {
         Some(rest) => !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()),
         None => false,
     }
@@ -677,7 +677,7 @@ pub mod pnft_gate {
 
     /// Release a previously claimed name so it can be reused by another NFT,
     /// and reset this NFT's own displayed name back to its factory default
-    /// ("FH no. <N>", captured the first time this mint was ever renamed --
+    /// ("VM no. <N>", captured the first time this mint was ever renamed --
     /// see default_name_record in update_metadata_delegated). Call this after
     /// renaming an NFT to free the old name; the frontend bundles it with the
     /// following update_metadata_delegated call when renaming to something
@@ -804,7 +804,7 @@ pub struct NameRecord {
 #[account]
 pub struct DefaultNameRecord {
     pub mint: Pubkey, // NFT mint this default belongs to
-    pub name: String, // pristine "FH no. <N>" name, captured on first rename
+    pub name: String, // pristine "VM no. <N>" name, captured on first rename
 }
 
 /* ---------------- Account Contexts ---------------- */

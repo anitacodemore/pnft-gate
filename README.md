@@ -1,6 +1,6 @@
 # pnft_gate
 
-An Anchor program for Forever Harambe that locks a programmable NFT (pNFT)
+An Anchor program for VaultedMonkey that locks a programmable NFT (pNFT)
 behind a passphrase, using Metaplex Token Metadata's delegate/lock
 authority. The holder's passphrase is stretched into an ed25519 keypair;
 only the public key is ever stored on-chain, and unlocking requires an
@@ -8,14 +8,14 @@ actual signature from the matching private key (regenerated client-side
 from the passphrase each time). The NFT stays locked (non-transferable)
 until that signature is produced.
 
-This repo exists as the target for Forever Harambe's bug bounty. The live
+This repo exists as the target for VaultedMonkey's bug bounty. The live
 target NFT is genuinely locked through this program, with a passphrase nobody
 — including the team — has recorded anywhere. If you find a way to unlock,
 transfer, or otherwise compromise it without the correct passphrase (or a way
 to compromise the admin/authority flows), see the live bounty page for current
 scope, reward, and how to claim:
 
-**https://foreverharambe.xyz/bounty**
+**https://vaultedmonkey.com/bounty**
 
 Note: the target's vault wallet is a normal SPL owner, but its private key is
 never published outright — `opt_out` only unfreezes and revokes the delegate,
@@ -30,7 +30,7 @@ obstacle to moving the NFT.
 
 Just the program source — `programs/pnft_gate/src/lib.rs` — plus the
 minimal Anchor/Cargo scaffolding to build it standalone. This is
-deliberately a narrow extract of Forever Harambe's full application (which
+deliberately a narrow extract of VaultedMonkey's full application (which
 also includes a marketplace, an auction house, and a Next.js frontend, none
 of which are in scope for the bounty or included here).
 
@@ -123,7 +123,7 @@ of `collection_mint`):
   on-chain metadata and carried forward untouched, so a rename can never
   swap the art or reshuffle royalties. Enforces global name uniqueness
   via a `NameRecord` PDA, rejects the collection's reserved
-  default-numbering format ("FH no. `<N>`") as a rename target, and
+  default-numbering format ("VM no. `<N>`") as a rename target, and
   charges a flat non-refundable rename fee. On a mint's first-ever
   rename, also snapshots its pristine pre-rename name into a
   `DefaultNameRecord` PDA, read directly from the account rather than
@@ -172,6 +172,6 @@ In scope: the `pnft_gate` program itself — lock/unlock logic, passphrase
 verification, admin/authority-gated instructions, PDA/account constraints.
 
 Out of scope: anything outside this program (frontend, off-chain
-infrastructure, other Forever Harambe programs), denial-of-service /
+infrastructure, other VaultedMonkey programs), denial-of-service /
 availability attacks, and anything requiring access to a device or account
 you don't own.
