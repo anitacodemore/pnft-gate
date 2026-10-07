@@ -9,8 +9,8 @@ from the passphrase each time). The NFT stays locked (non-transferable)
 until that signature is produced.
 
 This repo exists as the target for VaultedMonkey's bug bounty. The live
-target NFT is genuinely locked through this program, with a passphrase nobody
-— including the team — has recorded anywhere. If you find a way to unlock,
+target NFT is locked through this program, with a separate NFT protection
+passphrase. No passphrases or private keys are included here. If you find a way to unlock,
 transfer, or otherwise compromise it without the correct passphrase (or a way
 to compromise the admin/authority flows), see the live bounty page for current
 scope, reward, and how to claim:
@@ -28,31 +28,72 @@ obstacle to moving the NFT.
 
 ## What's in this repo
 
-Just the program source — `programs/pnft_gate/src/lib.rs` — plus the
-minimal Anchor/Cargo scaffolding to build it standalone. This is
+The exact production program source — `programs/pnft_gate/src/lib.rs` — plus
+minimal Anchor/Cargo scaffolding, a public IDL (`idl/pnft_gate.json`), and
+a mainnet deployment snapshot (`deployment/mainnet.json`). This is
 deliberately a narrow extract of VaultedMonkey's full application (which
 also includes a marketplace, an auction house, and a Next.js frontend, none
 of which are in scope for the bounty or included here).
 
 ## Program ID
 
-- Devnet: `8iGDFfyRoBcH9c1Y2gU8nosD7hNSSsskxjXK9xdUjEp3`
+- Mainnet-beta: [`3tsEPWSNWFuMLpEbHnnGTmz32TxCEi4egNP1bHt8SSjd`](https://explorer.solana.com/address/3tsEPWSNWFuMLpEbHnnGTmz32TxCEi4egNP1bHt8SSjd)
+- Config PDA: `7VJhyFskU1WR2RBehbsf1kD5m8RWPi34YjJYR5iyCP2P`
+- Verified collection: `2fAxJEzmKrByqL9GjQBpUxufcVidaesJt6bTESe9LcQ9`
+- Bounty NFT: `28CPDerzaWEg8iLYQJhL6i4NdTUNLUQPkZNizECax2AY`
+- Bounty vault: `EmzU1Ter9gYV2rL7p5BkmKgDtV2imD63BcGx6Fzb1ccG`
+
+The deployment snapshot includes the public admin, admin-action public key,
+upgrade authority, and treasury addresses. Public keys cannot sign transactions.
+Private keys, seed phrases, environment files, and passphrases are excluded.
+
+On October 7, 2026, both the standalone build from this repository and the local
+production build matched the downloaded mainnet binary byte-for-byte. Its SHA-256 is:
+
+```text
+29379f9b036400fe3f163d05382fe54bfc26c8304f07e1a563e15c4a198ebdba
+```
+
+This is a snapshot of the upgradeable deployment, not an independent audit or
+an automated on-chain source-verification badge. Recheck after any upgrade:
+
+```bash
+solana program show 3tsEPWSNWFuMLpEbHnnGTmz32TxCEi4egNP1bHt8SSjd --url mainnet-beta
+solana program dump 3tsEPWSNWFuMLpEbHnnGTmz32TxCEi4egNP1bHt8SSjd /tmp/pnft-gate-mainnet.so --url mainnet-beta
+shasum -a 256 /tmp/pnft-gate-mainnet.so
+```
+
+Current non-refundable treasury fees are **0.01860104 SOL for Vaulting** and
+**0.04883072 SOL for renaming**. Account rent and network fees are separate.
+Normal unlock closes and refunds both the LockDeposit and PassphraseKey accounts;
+releasing a name refunds its NameRecord rent. First-rename DefaultNameRecord rent
+remains in a permanent account. Rent amounts can change, so account balances on
+chain determine refunds. Historical rent estimates in source comments do not
+change the actual runtime rent requirements.
 
 ## Building
 
 ```bash
-anchor build
+cargo build-sbf --manifest-path programs/pnft_gate/Cargo.toml
 ```
 
-Requires the Solana CLI and Anchor CLI (0.30.x) installed. See
+Requires the Solana CLI and Anchor CLI installed; program dependencies use
+Anchor 0.30.1. The production build used Anchor CLI 0.32.1 with those dependencies.
+`Anchor.toml` points to mainnet for inspecting the live deployment; building does
+not deploy or initialize it. Do not deploy or initialize the live program as part
+of bounty testing. See
 [Anchor's installation docs](https://www.anchor-lang.com/docs/installation)
 if you don't have them set up.
 
-`anchor build` also generates the IDL (`target/idl/pnft_gate.json`) — the
-exact account/argument schema for every instruction below, useful for
-exercising the program from a TS client or `anchor test`. There's no
-bundled client or test suite in this repo (see *What's in this repo*
-above); the IDL plus this reference is the starting point for writing one.
+The public IDL is included at `idl/pnft_gate.json`, with the production program ID
+and account/argument schema for every instruction below. There is no bundled
+client or test suite in this repo.
+
+Use the build command above to preserve the published mainnet ID. Anchor CLI
+0.32.1's `anchor build` can generate a local keypair and automatically rewrite
+`declare_id!` and `Anchor.toml` to that new ID when the production keypair is not
+present. This repo intentionally does not include that keypair. Do not use
+`anchor keys sync` against this production snapshot.
 
 ## How it works — instruction flow
 
@@ -88,7 +129,7 @@ Normal holder flow, per NFT:
    comparison — the private key is regenerated client-side from the
    typed passphrase and never stored or transmitted, so there is nothing
    to read off-chain and replay. Unlocks, revokes the locked-transfer
-   delegate, and closes/refunds the `LockDeposit`.
+   delegate, and closes/refunds both the `LockDeposit` and `PassphraseKey`.
 
 Admin-only recovery flows (require the admin wallet's signature *and* a
 co-signature from `admin_action_signer`, whose public key must equal

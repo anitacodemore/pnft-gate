@@ -2,3 +2,13 @@ target/
 .anchor/
 node_modules/
 .DS_Store
+
+# Credentials and local deployment artifacts
+.env
+.env.*
+*.keypair.json
+*-keypair.json
+*Secret.json
+programAuthority.json
+wallets/
+secrets/

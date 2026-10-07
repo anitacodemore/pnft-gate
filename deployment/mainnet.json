@@ -1,0 +1,23 @@
+{
+  "cluster": "mainnet-beta",
+  "programId": "3tsEPWSNWFuMLpEbHnnGTmz32TxCEi4egNP1bHt8SSjd",
+  "programDataAddress": "Gi1tgUUspXxoLbjhNrANZCxkYZRy453tWuFFNZeiD2AE",
+  "upgradeAuthority": "prgoqXqpvBD65WgPjLYmxJ8evfRQGcF6CGA9wrn8EjX",
+  "lastDeploySlot": 454107782,
+  "configAddress": "7VJhyFskU1WR2RBehbsf1kD5m8RWPi34YjJYR5iyCP2P",
+  "admin": "VMNFTVWBARTYQrAAyAJd35jNUCacVsKDkuUVb1jVQ3v",
+  "adminActionPublicKey": "zzyzcZCCXH7SRDMSLJ7kLwHDfcJ93uCvRpWJMkUs4SZ",
+  "treasury": "VMTr2vLMMxqQV1kUoaTY9BpV54PMLF6NzmM6cHLEeRY",
+  "collectionMint": "2fAxJEzmKrByqL9GjQBpUxufcVidaesJt6bTESe9LcQ9",
+  "bountyMint": "28CPDerzaWEg8iLYQJhL6i4NdTUNLUQPkZNizECax2AY",
+  "bountyVault": "EmzU1Ter9gYV2rL7p5BkmKgDtV2imD63BcGx6Fzb1ccG",
+  "binaryBytes": 648760,
+  "binarySha256": "29379f9b036400fe3f163d05382fe54bfc26c8304f07e1a563e15c4a198ebdba",
+  "sourceSha256": "d5f4dfd93225a6762ebf2d07145fe534d977768af5f87b0a8ab7a1391d5c4e7c",
+  "verifiedAt": "2026-10-07",
+  "verification": "Standalone build from this repository and local production build both match the downloaded mainnet binary byte-for-byte. This is a deployment snapshot, not an independent security audit.",
+  "treasuryFeesLamports": {
+    "vault": 18601040,
+    "rename": 48830720
+  }
+}

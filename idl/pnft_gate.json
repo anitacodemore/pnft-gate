@@ -1,0 +1,3195 @@
+{
+  "address": "3tsEPWSNWFuMLpEbHnnGTmz32TxCEi4egNP1bHt8SSjd",
+  "metadata": {
+    "name": "pnft_gate",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Created with Anchor"
+  },
+  "instructions": [
+    {
+      "name": "admin_reset_pin",
+      "docs": [
+        "Admin resets a holder's passphrase key (recovery for a forgotten",
+        "passphrase). Gated by admin + admin-action signature. Closes the pin",
+        "account (rent back to the holder) so they can set a fresh passphrase."
+      ],
+      "discriminator": [
+        5,
+        243,
+        63,
+        92,
+        238,
+        158,
+        99,
+        191
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103,
+                  95,
+                  118,
+                  50
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "admin_action_signer",
+          "docs": [
+            "Admin-action second factor. Must sign and match Config.admin_action_pubkey."
+          ],
+          "signer": true
+        },
+        {
+          "name": "owner",
+          "docs": [
+            "refund from the closed pin account. Used in the pin PDA seeds."
+          ],
+          "writable": true
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "pin_hash",
+          "docs": [
+            "manually in the instruction body (by seeds, not by type) so it works for",
+            "any stored layout, including legacy pre-rename accounts."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  105,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "admin_transfer",
+      "docs": [
+        "Admin forced transfer (bypasses PIN and permit requirements)",
+        "Used for recovery of lost/stolen locked NFTs"
+      ],
+      "discriminator": [
+        196,
+        77,
+        244,
+        188,
+        16,
+        7,
+        192,
+        73
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103,
+                  95,
+                  118,
+                  50
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "admin_action_signer",
+          "docs": [
+            "Admin-action second factor. Must sign and match Config.admin_action_pubkey."
+          ],
+          "signer": true
+        },
+        {
+          "name": "from_owner",
+          "docs": [
+            "token_owner can receive lamport adjustments during unlock (same",
+            "reason OptOut's owner is mut); without this the runtime rejects the",
+            "CPI with UnbalancedInstruction the moment it touches this account."
+          ],
+          "writable": true
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "metadata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  101,
+                  116,
+                  97,
+                  100,
+                  97,
+                  116,
+                  97
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  11,
+                  112,
+                  101,
+                  177,
+                  227,
+                  209,
+                  124,
+                  69,
+                  56,
+                  157,
+                  82,
+                  127,
+                  107,
+                  4,
+                  195,
+                  205,
+                  88,
+                  184,
+                  108,
+                  115,
+                  26,
+                  160,
+                  253,
+                  181,
+                  73,
+                  182,
+                  209,
+                  188,
+                  3,
+                  248,
+                  41,
+                  70
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                11,
+                112,
+                101,
+                177,
+                227,
+                209,
+                124,
+                69,
+                56,
+                157,
+                82,
+                127,
+                107,
+                4,
+                195,
+                205,
+                88,
+                184,
+                108,
+                115,
+                26,
+                160,
+                253,
+                181,
+                73,
+                182,
+                209,
+                188,
+                3,
+                248,
+                41,
+                70
+              ]
+            }
+          }
+        },
+        {
+          "name": "master_edition"
+        },
+        {
+          "name": "from_token",
+          "writable": true
+        },
+        {
+          "name": "from_token_record",
+          "docs": [
+            "for (mint, from_token) so a mismatched/spoofed account can't feed a",
+            "false locked/listed reading into the checks above."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  101,
+                  116,
+                  97,
+                  100,
+                  97,
+                  116,
+                  97
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  11,
+                  112,
+                  101,
+                  177,
+                  227,
+                  209,
+                  124,
+                  69,
+                  56,
+                  157,
+                  82,
+                  127,
+                  107,
+                  4,
+                  195,
+                  205,
+                  88,
+                  184,
+                  108,
+                  115,
+                  26,
+                  160,
+                  253,
+                  181,
+                  73,
+                  182,
+                  209,
+                  188,
+                  3,
+                  248,
+                  41,
+                  70
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  111,
+                  107,
+                  101,
+                  110,
+                  95,
+                  114,
+                  101,
+                  99,
+                  111,
+                  114,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "from_token"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                11,
+                112,
+                101,
+                177,
+                227,
+                209,
+                124,
+                69,
+                56,
+                157,
+                82,
+                127,
+                107,
+                4,
+                195,
+                205,
+                88,
+                184,
+                108,
+                115,
+                26,
+                160,
+                253,
+                181,
+                73,
+                182,
+                209,
+                188,
+                3,
+                248,
+                41,
+                70
+              ]
+            }
+          }
+        },
+        {
+          "name": "to_owner"
+        },
+        {
+          "name": "to_token",
+          "writable": true
+        },
+        {
+          "name": "to_token_record",
+          "docs": [
+            "PDA for (mint, to_token), for the same reason as from_token_record."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  101,
+                  116,
+                  97,
+                  100,
+                  97,
+                  116,
+                  97
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  11,
+                  112,
+                  101,
+                  177,
+                  227,
+                  209,
+                  124,
+                  69,
+                  56,
+                  157,
+                  82,
+                  127,
+                  107,
+                  4,
+                  195,
+                  205,
+                  88,
+                  184,
+                  108,
+                  115,
+                  26,
+                  160,
+                  253,
+                  181,
+                  73,
+                  182,
+                  209,
+                  188,
+                  3,
+                  248,
+                  41,
+                  70
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  111,
+                  107,
+                  101,
+                  110,
+                  95,
+                  114,
+                  101,
+                  99,
+                  111,
+                  114,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "to_token"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                11,
+                112,
+                101,
+                177,
+                227,
+                209,
+                124,
+                69,
+                56,
+                157,
+                82,
+                127,
+                107,
+                4,
+                195,
+                205,
+                88,
+                184,
+                108,
+                115,
+                26,
+                160,
+                253,
+                181,
+                73,
+                182,
+                209,
+                188,
+                3,
+                248,
+                41,
+                70
+              ]
+            }
+          }
+        },
+        {
+          "name": "delegate_record",
+          "docs": [
+            "currently locked/delegated to us (Theft Recovery requires this)."
+          ],
+          "writable": true
+        },
+        {
+          "name": "delegate_pda",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pin",
+          "docs": [
+            "recovered-from wallet's stale pin doesn't block a later re-lock."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  105,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "from_owner"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "lock_deposit",
+          "docs": [
+            "Refundable lock deposit, if one exists — refunded to admin (this is a",
+            "theft-recovery override, not a normal unlock).",
+            "close_pda_if_exists in the body if present. Required (not Option) so a",
+            "caller can't skip it and leave it behind to brick a future opt_in (#7)."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  111,
+                  99,
+                  107,
+                  95,
+                  100,
+                  101,
+                  112,
+                  111,
+                  115,
+                  105,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_metadata_program",
+          "address": "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+        },
+        {
+          "name": "spl_token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "spl_ata_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "sysvar_instructions"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "admin_unlock",
+      "docs": [
+        "Admin unlocks an NFT without transferring it — e.g. the holder forgot their",
+        "PIN. Unlike opt_out, `owner` doesn't need to sign: the delegate_pda's own",
+        "authority (granted back when the holder originally locked via opt_in) is",
+        "what authorizes the unlock on Metaplex's side, same mechanism admin_transfer",
+        "already relies on. Requires the admin action PIN as an extra safety check on",
+        "top of the wallet signature. Refunds any refundable lock deposit to the",
+        "original locker."
+      ],
+      "discriminator": [
+        196,
+        198,
+        70,
+        34,
+        241,
+        244,
+        111,
+        63
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103,
+                  95,
+                  118,
+                  50
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "admin_action_signer",
+          "docs": [
+            "Admin-action second factor. Must sign and match Config.admin_action_pubkey.",
+            "Replaces the old compiled-in PIN hash; the private key lives only in .env."
+          ],
+          "signer": true
+        },
+        {
+          "name": "owner",
+          "docs": [
+            "(granted back when they originally locked) authorizes the unlock; this",
+            "account is only a reference, and the refund destination if a deposit exists."
+          ],
+          "writable": true
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "token",
+          "docs": [
+            "Owner's token account — deserialized so the `owner` constraint below is",
+            "enforced by Anchor itself, not only Token Metadata's internal check inside",
+            "RevokeLockedTransferV1. Prevents the `owner` account passed in from silently",
+            "mismatching the token account's real recorded SPL owner."
+          ],
+          "writable": true
+        },
+        {
+          "name": "metadata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  101,
+                  116,
+                  97,
+                  100,
+                  97,
+                  116,
+                  97
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  11,
+                  112,
+                  101,
+                  177,
+                  227,
+                  209,
+                  124,
+                  69,
+                  56,
+                  157,
+                  82,
+                  127,
+                  107,
+                  4,
+                  195,
+                  205,
+                  88,
+                  184,
+                  108,
+                  115,
+                  26,
+                  160,
+                  253,
+                  181,
+                  73,
+                  182,
+                  209,
+                  188,
+                  3,
+                  248,
+                  41,
+                  70
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                11,
+                112,
+                101,
+                177,
+                227,
+                209,
+                124,
+                69,
+                56,
+                157,
+                82,
+                127,
+                107,
+                4,
+                195,
+                205,
+                88,
+                184,
+                108,
+                115,
+                26,
+                160,
+                253,
+                181,
+                73,
+                182,
+                209,
+                188,
+                3,
+                248,
+                41,
+                70
+              ]
+            }
+          }
+        },
+        {
+          "name": "master_edition"
+        },
+        {
+          "name": "token_record",
+          "docs": [
+            "(mint, token) so a mismatched/spoofed account can't feed a false",
+            "locked/listed reading into the checks above."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  101,
+                  116,
+                  97,
+                  100,
+                  97,
+                  116,
+                  97
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  11,
+                  112,
+                  101,
+                  177,
+                  227,
+                  209,
+                  124,
+                  69,
+                  56,
+                  157,
+                  82,
+                  127,
+                  107,
+                  4,
+                  195,
+                  205,
+                  88,
+                  184,
+                  108,
+                  115,
+                  26,
+                  160,
+                  253,
+                  181,
+                  73,
+                  182,
+                  209,
+                  188,
+                  3,
+                  248,
+                  41,
+                  70
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  111,
+                  107,
+                  101,
+                  110,
+                  95,
+                  114,
+                  101,
+                  99,
+                  111,
+                  114,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "token"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                11,
+                112,
+                101,
+                177,
+                227,
+                209,
+                124,
+                69,
+                56,
+                157,
+                82,
+                127,
+                107,
+                4,
+                195,
+                205,
+                88,
+                184,
+                108,
+                115,
+                26,
+                160,
+                253,
+                181,
+                73,
+                182,
+                209,
+                188,
+                3,
+                248,
+                41,
+                70
+              ]
+            }
+          }
+        },
+        {
+          "name": "delegate_record",
+          "writable": true
+        },
+        {
+          "name": "delegate_pda",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pin",
+          "docs": [
+            "fresh re-lock isn't blocked by set_pin's overwrite guard."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  105,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "lock_deposit",
+          "docs": [
+            "Refundable lock deposit, if one exists.",
+            "close_pda_if_exists in the body if present. Required (not Option) so a",
+            "caller can't skip it and leave it behind to brick a future opt_in (#7)."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  111,
+                  99,
+                  107,
+                  95,
+                  100,
+                  101,
+                  112,
+                  111,
+                  115,
+                  105,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_metadata_program",
+          "address": "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+        },
+        {
+          "name": "spl_token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "sysvar_instructions"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "close_config",
+      "docs": [
+        "Admin-gated close of the Config account (used on devnet to re-initialize",
+        "with a changed layout). Requires admin + admin-action 2FA, both read from",
+        "the account's raw bytes so this works even when the on-chain layout differs",
+        "from the current Config struct. Config PDA is seed-bound and closed by seeds."
+      ],
+      "discriminator": [
+        145,
+        9,
+        72,
+        157,
+        95,
+        125,
+        61,
+        85
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "admin_action_signer",
+          "docs": [
+            "Admin-action second factor (verified against the config's stored bytes in",
+            "the instruction body, since config here is layout-agnostic)."
+          ],
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103,
+                  95,
+                  118,
+                  50
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "initialize",
+      "docs": [
+        "Initialize the program config with the admin address and the admin-action",
+        "public key (the second factor for admin recovery instructions)."
+      ],
+      "discriminator": [
+        175,
+        175,
+        109,
+        31,
+        13,
+        152,
+        155,
+        237
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "docs": [
+            "Must be EXPECTED_INITIAL_ADMIN -- see its doc comment. Closes the",
+            "front-run race: only this specific wallet can ever successfully call",
+            "initialize, regardless of who submits the transaction first."
+          ],
+          "writable": true,
+          "signer": true,
+          "address": "VMNFTVWBARTYQrAAyAJd35jNUCacVsKDkuUVb1jVQ3v"
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103,
+                  95,
+                  118,
+                  50
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "admin_action_pubkey",
+          "type": "pubkey"
+        },
+        {
+          "name": "collection_mint",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "opt_in",
+      "docs": [
+        "User opts in: delegate locked transfer + lock the pNFT",
+        "After this, the NFT cannot be transferred without going through this program"
+      ],
+      "discriminator": [
+        80,
+        60,
+        147,
+        52,
+        129,
+        219,
+        85,
+        82
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "docs": [
+            "Program config — provides the collection mint the gate checks against."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103,
+                  95,
+                  118,
+                  50
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "docs": [
+            "this is a valid mint and matches the metadata/edition PDAs."
+          ]
+        },
+        {
+          "name": "token",
+          "writable": true
+        },
+        {
+          "name": "metadata",
+          "docs": [
+            "(finding #5's fix, extended here) so it can't be a spoofed/unrelated",
+            "account; downstream CPIs already re-validate this internally, but we",
+            "shouldn't depend solely on a third party's own checks for it."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  101,
+                  116,
+                  97,
+                  100,
+                  97,
+                  116,
+                  97
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  11,
+                  112,
+                  101,
+                  177,
+                  227,
+                  209,
+                  124,
+                  69,
+                  56,
+                  157,
+                  82,
+                  127,
+                  107,
+                  4,
+                  195,
+                  205,
+                  88,
+                  184,
+                  108,
+                  115,
+                  26,
+                  160,
+                  253,
+                  181,
+                  73,
+                  182,
+                  209,
+                  188,
+                  3,
+                  248,
+                  41,
+                  70
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                11,
+                112,
+                101,
+                177,
+                227,
+                209,
+                124,
+                69,
+                56,
+                157,
+                82,
+                127,
+                107,
+                4,
+                195,
+                205,
+                88,
+                184,
+                108,
+                115,
+                26,
+                160,
+                253,
+                181,
+                73,
+                182,
+                209,
+                188,
+                3,
+                248,
+                41,
+                70
+              ]
+            }
+          }
+        },
+        {
+          "name": "master_edition"
+        },
+        {
+          "name": "token_record",
+          "docs": [
+            "for (mint, token) so a mismatched/spoofed account can't feed a false",
+            "locked/listed reading into the checks above."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  101,
+                  116,
+                  97,
+                  100,
+                  97,
+                  116,
+                  97
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  11,
+                  112,
+                  101,
+                  177,
+                  227,
+                  209,
+                  124,
+                  69,
+                  56,
+                  157,
+                  82,
+                  127,
+                  107,
+                  4,
+                  195,
+                  205,
+                  88,
+                  184,
+                  108,
+                  115,
+                  26,
+                  160,
+                  253,
+                  181,
+                  73,
+                  182,
+                  209,
+                  188,
+                  3,
+                  248,
+                  41,
+                  70
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  111,
+                  107,
+                  101,
+                  110,
+                  95,
+                  114,
+                  101,
+                  99,
+                  111,
+                  114,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "token"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                11,
+                112,
+                101,
+                177,
+                227,
+                209,
+                124,
+                69,
+                56,
+                157,
+                82,
+                127,
+                107,
+                4,
+                195,
+                205,
+                88,
+                184,
+                108,
+                115,
+                26,
+                160,
+                253,
+                181,
+                73,
+                182,
+                209,
+                188,
+                3,
+                248,
+                41,
+                70
+              ]
+            }
+          }
+        },
+        {
+          "name": "delegate_record",
+          "writable": true
+        },
+        {
+          "name": "delegate_pda",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury",
+          "writable": true,
+          "address": "VMTr2vLMMxqQV1kUoaTY9BpV54PMLF6NzmM6cHLEeRY"
+        },
+        {
+          "name": "lock_deposit",
+          "docs": [
+            "Refundable half of the lock fee — returned in full when this NFT is",
+            "unlocked, via opt_out or admin_unlock."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  111,
+                  99,
+                  107,
+                  95,
+                  100,
+                  101,
+                  112,
+                  111,
+                  115,
+                  105,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_metadata_program",
+          "address": "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+        },
+        {
+          "name": "spl_token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "sysvar_instructions"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "opt_out",
+      "docs": [
+        "User opt-out: unlock (after that they can revoke delegate + transfer freely).",
+        "",
+        "The holder proves knowledge of their passphrase by SIGNING with the",
+        "passphrase-derived key (the `passphrase_signer` account), whose public key",
+        "must equal the one stored on-chain in the `pin` account. This is enforced",
+        "entirely by the context constraint — a stolen wallet key alone cannot",
+        "produce this signature, so it can no longer unlock. There is no hash to",
+        "submit or replay. Admin-assisted recovery for a forgotten passphrase has",
+        "its own instruction (admin_unlock), gated by the admin-action key instead."
+      ],
+      "discriminator": [
+        155,
+        214,
+        195,
+        27,
+        225,
+        33,
+        157,
+        215
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "pin",
+          "docs": [
+            "The passphrase key record for (owner, mint). Its stored pubkey must equal",
+            "the passphrase_signer below — enforced here by Anchor. Required: every",
+            "locked NFT has one (set_pin runs before opt_in), so a missing account",
+            "correctly fails rather than silently skipping the check.",
+            "Closed on unlock (`close = owner`): the passphrase only needs to exist",
+            "while the NFT is locked. Clearing it here means a later re-lock is a clean",
+            "first-time set_pin, and the set_pin overwrite guard then fires only in the",
+            "real attack case — someone trying to change the passphrase of a still-locked",
+            "NFT (where the account is NOT cleared because no unlock happened)."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  105,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "passphrase_signer",
+          "docs": [
+            "The passphrase-derived key. Must sign — proving the caller knows the",
+            "passphrase. A stolen wallet key alone cannot produce this signature, and",
+            "the stored pubkey cannot be replayed (you can't sign with a public key)."
+          ],
+          "signer": true
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "token",
+          "docs": [
+            "Token account — deserialized (not UncheckedAccount) so the `owner` constraint",
+            "below can be enforced by Anchor itself rather than relying solely on Token",
+            "Metadata's own internal check inside RevokeLockedTransferV1. Defense-in-depth:",
+            "the borrowed protection already works, this makes it explicit in our own code too."
+          ],
+          "writable": true
+        },
+        {
+          "name": "metadata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  101,
+                  116,
+                  97,
+                  100,
+                  97,
+                  116,
+                  97
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  11,
+                  112,
+                  101,
+                  177,
+                  227,
+                  209,
+                  124,
+                  69,
+                  56,
+                  157,
+                  82,
+                  127,
+                  107,
+                  4,
+                  195,
+                  205,
+                  88,
+                  184,
+                  108,
+                  115,
+                  26,
+                  160,
+                  253,
+                  181,
+                  73,
+                  182,
+                  209,
+                  188,
+                  3,
+                  248,
+                  41,
+                  70
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                11,
+                112,
+                101,
+                177,
+                227,
+                209,
+                124,
+                69,
+                56,
+                157,
+                82,
+                127,
+                107,
+                4,
+                195,
+                205,
+                88,
+                184,
+                108,
+                115,
+                26,
+                160,
+                253,
+                181,
+                73,
+                182,
+                209,
+                188,
+                3,
+                248,
+                41,
+                70
+              ]
+            }
+          }
+        },
+        {
+          "name": "master_edition"
+        },
+        {
+          "name": "token_record",
+          "docs": [
+            "(mint, token)."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  101,
+                  116,
+                  97,
+                  100,
+                  97,
+                  116,
+                  97
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  11,
+                  112,
+                  101,
+                  177,
+                  227,
+                  209,
+                  124,
+                  69,
+                  56,
+                  157,
+                  82,
+                  127,
+                  107,
+                  4,
+                  195,
+                  205,
+                  88,
+                  184,
+                  108,
+                  115,
+                  26,
+                  160,
+                  253,
+                  181,
+                  73,
+                  182,
+                  209,
+                  188,
+                  3,
+                  248,
+                  41,
+                  70
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  111,
+                  107,
+                  101,
+                  110,
+                  95,
+                  114,
+                  101,
+                  99,
+                  111,
+                  114,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "token"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                11,
+                112,
+                101,
+                177,
+                227,
+                209,
+                124,
+                69,
+                56,
+                157,
+                82,
+                127,
+                107,
+                4,
+                195,
+                205,
+                88,
+                184,
+                108,
+                115,
+                26,
+                160,
+                253,
+                181,
+                73,
+                182,
+                209,
+                188,
+                3,
+                248,
+                41,
+                70
+              ]
+            }
+          }
+        },
+        {
+          "name": "delegate_record",
+          "writable": true
+        },
+        {
+          "name": "delegate_pda",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "lock_deposit",
+          "docs": [
+            "Refundable lock deposit, if one exists — NFTs locked before this feature",
+            "shipped won't have one, so this is optional and skipped gracefully.",
+            "close_pda_if_exists in the body if present. Required (not Option) so a",
+            "caller can't skip it and leave it behind to brick a future opt_in (#7)."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  111,
+                  99,
+                  107,
+                  95,
+                  100,
+                  101,
+                  112,
+                  111,
+                  115,
+                  105,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_metadata_program",
+          "address": "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+        },
+        {
+          "name": "spl_token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "sysvar_instructions"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "release_name",
+      "docs": [
+        "Release a previously claimed name so it can be reused by another NFT,",
+        "and reset this NFT's own displayed name back to its factory default",
+        "(\"VM no. <N>\", captured the first time this mint was ever renamed --",
+        "see default_name_record in update_metadata_delegated). Call this after",
+        "renaming an NFT to free the old name; the frontend bundles it with the",
+        "following update_metadata_delegated call when renaming to something",
+        "new, so this reset is only ever visible when releasing without an",
+        "immediate rename."
+      ],
+      "discriminator": [
+        3,
+        68,
+        17,
+        217,
+        57,
+        53,
+        123,
+        164
+      ],
+      "accounts": [
+        {
+          "name": "holder",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "docs": [
+            "Program config — provides the collection mint the gate checks against."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103,
+                  95,
+                  118,
+                  50
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "docs": [
+            "The NFT mint"
+          ]
+        },
+        {
+          "name": "token_account",
+          "docs": [
+            "Holder's token account - proves ownership"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "holder"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "name_record",
+          "docs": [
+            "The name record to release — closed and rent returned to holder"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  97,
+                  109,
+                  101,
+                  95,
+                  114,
+                  101,
+                  99,
+                  111,
+                  114,
+                  100
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "name"
+              }
+            ]
+          }
+        },
+        {
+          "name": "default_name_record",
+          "docs": [
+            "Must already exist -- guaranteed, since a NameRecord can't exist",
+            "(nothing to release) without a prior update_metadata_delegated call",
+            "having created this first."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  102,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  110,
+                  97,
+                  109,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "metadata",
+          "writable": true
+        },
+        {
+          "name": "metadata_delegate_pda",
+          "docs": [
+            "Metadata delegate PDA - this program's authority for metadata updates"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  101,
+                  116,
+                  97,
+                  100,
+                  97,
+                  116,
+                  97,
+                  95,
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_record",
+          "docs": [
+            "(mint, token_account) so the lock/listed check can't be bypassed with a",
+            "spoofed or empty account (finding #5)."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  101,
+                  116,
+                  97,
+                  100,
+                  97,
+                  116,
+                  97
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  11,
+                  112,
+                  101,
+                  177,
+                  227,
+                  209,
+                  124,
+                  69,
+                  56,
+                  157,
+                  82,
+                  127,
+                  107,
+                  4,
+                  195,
+                  205,
+                  88,
+                  184,
+                  108,
+                  115,
+                  26,
+                  160,
+                  253,
+                  181,
+                  73,
+                  182,
+                  209,
+                  188,
+                  3,
+                  248,
+                  41,
+                  70
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  111,
+                  107,
+                  101,
+                  110,
+                  95,
+                  114,
+                  101,
+                  99,
+                  111,
+                  114,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "token_account"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                11,
+                112,
+                101,
+                177,
+                227,
+                209,
+                124,
+                69,
+                56,
+                157,
+                82,
+                127,
+                107,
+                4,
+                195,
+                205,
+                88,
+                184,
+                108,
+                115,
+                26,
+                160,
+                253,
+                181,
+                73,
+                182,
+                209,
+                188,
+                3,
+                248,
+                41,
+                70
+              ]
+            }
+          }
+        },
+        {
+          "name": "token_metadata_program",
+          "address": "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+        },
+        {
+          "name": "sysvar_instructions",
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "_name",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "set_pin",
+      "docs": [
+        "User sets (or changes) their passphrase for an NFT, per-NFT.",
+        "",
+        "The client derives an ed25519 keypair from Argon2id(passphrase) and sends",
+        "only the PUBLIC key here. The private key is never stored or transmitted —",
+        "it's regenerated in the browser from the typed passphrase each time it's",
+        "needed to sign an unlock. Storing a public key is safe even though accounts",
+        "are world-readable: you cannot sign with a public key.",
+        "",
+        "Overwrite guard (Critical #2): if a passphrase is already set, the CURRENT",
+        "passphrase key must sign (`old_passphrase_signer`) to change it. This stops",
+        "a thief who has only the wallet key from rotating the passphrase out from",
+        "under the owner. First-time set needs no old signer. Admins reset a",
+        "forgotten passphrase via `admin_reset_pin`, not here."
+      ],
+      "discriminator": [
+        107,
+        152,
+        129,
+        131,
+        112,
+        122,
+        214,
+        195
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "pin_hash",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  105,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "old_passphrase_signer",
+          "docs": [
+            "The CURRENT passphrase key — required only when changing an existing",
+            "passphrase (overwrite guard). Omitted (None) on first-time set. Anchor",
+            "resolves an absent optional signer to None; the instruction body still",
+            "requires it whenever a passphrase already exists, so a client cannot skip",
+            "the guard by omitting it."
+          ],
+          "signer": true,
+          "optional": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "new_passphrase_pubkey",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "update_admin",
+      "docs": [
+        "Update the admin address. Requires BOTH the current admin wallet AND the",
+        "current admin-action key to sign — a stolen admin wallet alone can NOT",
+        "hijack Config.admin and lock out the real owner (same independent-",
+        "authorization pattern as update_admin_action_key)."
+      ],
+      "discriminator": [
+        161,
+        176,
+        40,
+        213,
+        60,
+        184,
+        179,
+        228
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103,
+                  95,
+                  118,
+                  50
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "admin_action_signer",
+          "docs": [
+            "Admin-action second factor. Must sign and match Config.admin_action_pubkey.",
+            "Without this, a compromised admin wallet alone could permanently hijack",
+            "Config.admin (this was the one admin instruction NOT already gated by the",
+            "passphrase co-signer, unlike admin_transfer/admin_unlock/admin_reset_pin/",
+            "update_admin_action_key)."
+          ],
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "new_admin",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "update_admin_action_key",
+      "docs": [
+        "Rotate the admin-action public key. Requires BOTH the admin wallet AND the",
+        "CURRENT admin-action key to sign (see RotateAdminActionKey). This is the",
+        "independent-authorization fix: a stolen admin wallet alone can NOT swap in",
+        "an attacker's second factor and thereby gain full admin-recovery power.",
+        "",
+        "Lockout note: because the current second factor must sign, you can only",
+        "rotate while you still hold it. If the admin-action key is ever lost",
+        "entirely, the program's upgrade authority is the backstop (it can already",
+        "replace the whole program, so it can migrate this value) — until the",
+        "program is made immutable for mainnet, at which point plan rotation with",
+        "a multisig-held upgrade authority."
+      ],
+      "discriminator": [
+        24,
+        68,
+        11,
+        48,
+        7,
+        212,
+        64,
+        39
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "current_admin_action_signer",
+          "docs": [
+            "The CURRENT admin-action key must also sign — independent authorization."
+          ],
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103,
+                  95,
+                  118,
+                  50
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "new_key",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "update_metadata_delegated",
+      "docs": [
+        "Update metadata - delegated to NFT holder",
+        "Allows the current holder of an NFT to update its metadata",
+        "The program must be set as the update authority for the NFT",
+        "Rename an NFT. The holder may ONLY change the `name`; symbol, uri (the",
+        "art/metadata), creators/royalties and seller_fee are carried forward from",
+        "the current on-chain metadata and cannot be altered here (finding #4 —",
+        "previously the holder could rewrite uri/symbol/creators and force a 500 bps",
+        "royalty). token_record is now address-bound in the context (finding #5), so",
+        "the lock/listed guard below can't be bypassed with a spoofed account."
+      ],
+      "discriminator": [
+        104,
+        46,
+        47,
+        113,
+        147,
+        155,
+        35,
+        128
+      ],
+      "accounts": [
+        {
+          "name": "holder",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "docs": [
+            "Program config — provides the collection mint the gate checks against."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103,
+                  95,
+                  118,
+                  50
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "docs": [
+            "The NFT mint"
+          ]
+        },
+        {
+          "name": "token_account",
+          "docs": [
+            "Holder's token account - proves ownership"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "holder"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "metadata",
+          "writable": true
+        },
+        {
+          "name": "metadata_delegate_pda",
+          "docs": [
+            "Metadata delegate PDA - this program's authority for metadata updates"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  101,
+                  116,
+                  97,
+                  100,
+                  97,
+                  116,
+                  97,
+                  95,
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "name_record",
+          "docs": [
+            "Name reservation PDA — enforces case-insensitive name uniqueness.",
+            "Seeded by the LOWERCASE name bytes so \"PoTatO\" and \"potato\" map to",
+            "the same PDA. The original casing is preserved in the metadata update."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  97,
+                  109,
+                  101,
+                  95,
+                  114,
+                  101,
+                  99,
+                  111,
+                  114,
+                  100
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "name"
+              }
+            ]
+          }
+        },
+        {
+          "name": "default_name_record",
+          "docs": [
+            "Snapshot of this mint's factory-default name -- created once, on the",
+            "first-ever rename, and never overwritten after. See update_metadata_delegated."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  102,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  110,
+                  97,
+                  109,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_record",
+          "docs": [
+            "(mint, token_account) so the lock/listed check can't be bypassed with a",
+            "spoofed or empty account (finding #5)."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  101,
+                  116,
+                  97,
+                  100,
+                  97,
+                  116,
+                  97
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  11,
+                  112,
+                  101,
+                  177,
+                  227,
+                  209,
+                  124,
+                  69,
+                  56,
+                  157,
+                  82,
+                  127,
+                  107,
+                  4,
+                  195,
+                  205,
+                  88,
+                  184,
+                  108,
+                  115,
+                  26,
+                  160,
+                  253,
+                  181,
+                  73,
+                  182,
+                  209,
+                  188,
+                  3,
+                  248,
+                  41,
+                  70
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  111,
+                  107,
+                  101,
+                  110,
+                  95,
+                  114,
+                  101,
+                  99,
+                  111,
+                  114,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "token_account"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                11,
+                112,
+                101,
+                177,
+                227,
+                209,
+                124,
+                69,
+                56,
+                157,
+                82,
+                127,
+                107,
+                4,
+                195,
+                205,
+                88,
+                184,
+                108,
+                115,
+                26,
+                160,
+                253,
+                181,
+                73,
+                182,
+                209,
+                188,
+                3,
+                248,
+                41,
+                70
+              ]
+            }
+          }
+        },
+        {
+          "name": "token_metadata_program",
+          "address": "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+        },
+        {
+          "name": "sysvar_instructions",
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        },
+        {
+          "name": "treasury",
+          "writable": true,
+          "address": "VMTr2vLMMxqQV1kUoaTY9BpV54PMLF6NzmM6cHLEeRY"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Config",
+      "discriminator": [
+        155,
+        12,
+        170,
+        224,
+        30,
+        250,
+        204,
+        130
+      ]
+    },
+    {
+      "name": "DefaultNameRecord",
+      "discriminator": [
+        72,
+        86,
+        142,
+        108,
+        80,
+        29,
+        101,
+        243
+      ]
+    },
+    {
+      "name": "LockDeposit",
+      "discriminator": [
+        184,
+        128,
+        220,
+        207,
+        105,
+        182,
+        124,
+        197
+      ]
+    },
+    {
+      "name": "NameRecord",
+      "discriminator": [
+        254,
+        22,
+        17,
+        161,
+        229,
+        49,
+        238,
+        105
+      ]
+    },
+    {
+      "name": "PassphraseKey",
+      "discriminator": [
+        11,
+        77,
+        92,
+        141,
+        189,
+        248,
+        34,
+        136
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "PinRequired",
+      "msg": "Passphrase signature required to change an existing passphrase"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidPin",
+      "msg": "Invalid passphrase"
+    },
+    {
+      "code": 6002,
+      "name": "NotOwner",
+      "msg": "Caller does not own this NFT"
+    },
+    {
+      "code": 6003,
+      "name": "NameTaken",
+      "msg": "Name is already taken by another NFT"
+    },
+    {
+      "code": 6004,
+      "name": "NftIsListed",
+      "msg": "NFT is currently listed for sale -- cancel listing first"
+    },
+    {
+      "code": 6005,
+      "name": "NftIsLocked",
+      "msg": "NFT is currently locked -- unlock it first"
+    },
+    {
+      "code": 6006,
+      "name": "InvalidAdminPin",
+      "msg": "Invalid admin action PIN"
+    },
+    {
+      "code": 6007,
+      "name": "NftNotLocked",
+      "msg": "NFT is not currently locked -- Theft Recovery requires an active lock"
+    },
+    {
+      "code": 6008,
+      "name": "ReservedName",
+      "msg": "This name format is reserved for the collection's default numbering"
+    },
+    {
+      "code": 6009,
+      "name": "MetadataReadFailed",
+      "msg": "Failed to read NFT metadata"
+    },
+    {
+      "code": 6010,
+      "name": "NotInCollection",
+      "msg": "NFT is not a verified member of this collection"
+    }
+  ],
+  "types": [
+    {
+      "name": "Config",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "admin_action_pubkey",
+            "docs": [
+              "Public key of the admin-action second factor. Its private key (held only",
+              "in .env) must sign admin_unlock / admin_transfer / admin_reset_pin."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "collection_mint",
+            "docs": [
+              "The collection this program operates on. Locking (opt_in) and renaming are",
+              "restricted to NFTs that are VERIFIED members of this collection, so admin",
+              "recovery power can never reach an NFT outside it. Configurable (set at",
+              "initialize from the deploy config), not hardcoded."
+            ],
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "DefaultNameRecord",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LockDeposit",
+      "docs": [
+        "Refundable half of the lock fee. Its balance is exactly its own rent-exempt",
+        "minimum -- `init` during opt_in is the only funding it ever gets, no top-up --",
+        "so closing it during opt_out or admin_unlock refunds exactly what was charged.",
+        "NFTs locked before this feature existed simply have no LockDeposit PDA — every",
+        "unlock path treats it as optional and skips the refund step rather than erroring."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "NameRecord",
+      "docs": [
+        "Stores which NFT mint has claimed a given name (enforces uniqueness)"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PassphraseKey",
+      "docs": [
+        "Stores the PUBLIC KEY derived from a user's passphrase (per-NFT). Unlocking",
+        "requires a signature from the matching private key, which is regenerated in",
+        "the browser from the passphrase and never stored. A public key is safe to",
+        "store in a world-readable account because you cannot sign with it."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "passphrase_pubkey",
+            "type": "pubkey"
+          }
+        ]
+      }
+    }
+  ]
+}

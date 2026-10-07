@@ -13,12 +13,12 @@ use mpl_token_metadata::instructions::{
 };
 use mpl_token_metadata::types::{Data, Creator};
 
-declare_id!("8iGDFfyRoBcH9c1Y2gU8nosD7hNSSsskxjXK9xdUjEp3");
+declare_id!("3tsEPWSNWFuMLpEbHnnGTmz32TxCEi4egNP1bHt8SSjd");
 
 /// Dedicated fee-collection wallet, separate from the delegate/admin authority so it
 /// never needs to be a hot operational key. Receives the non-refundable half of the
 /// lock fee (see opt_in).
-const TREASURY: Pubkey = pubkey!("WL7FvaBTL5iDhaGZabmbYwGzq3V35LUvG7QuxqYk3ez");
+const TREASURY: Pubkey = pubkey!("VMTr2vLMMxqQV1kUoaTY9BpV54PMLF6NzmM6cHLEeRY");
 
 /// The only wallet allowed to call `initialize`. Config's address is a fixed PDA
 /// (seeds = ["config_v2"]), computable by anyone the moment the program ID is
@@ -28,7 +28,7 @@ const TREASURY: Pubkey = pubkey!("WL7FvaBTL5iDhaGZabmbYwGzq3V35LUvG7QuxqYk3ez");
 /// hardcode (unlike the old PIN hash); this only gates the one bootstrapping
 /// call, never the ongoing admin identity (which stays reassignable via
 /// update_admin after initialize succeeds).
-const EXPECTED_INITIAL_ADMIN: Pubkey = pubkey!("HRMgh5kg8dUXapMgZ4PKEPjfBxk1wZpRXsNCnAWNMHBE");
+const EXPECTED_INITIAL_ADMIN: Pubkey = pubkey!("VMNFTVWBARTYQrAAyAJd35jNUCacVsKDkuUVb1jVQ3v");
 
 /// Admin actions (admin_unlock, admin_transfer, admin_reset_pin) are gated by a
 /// second factor stored as a PUBLIC KEY in Config.admin_action_pubkey and proven
